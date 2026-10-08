@@ -40,6 +40,13 @@ Deploy the complete current `main` branch. An earlier commit omitted `src/storag
 
 The optional npm install-script notices shown for Baileys and protobufjs do not cause the missing local module error. If that error remains after updating, check that both files above exist under `/home/container/src/storage/`; the deployed checkout is still incomplete.
 
+If startup reports `DASHBOARD_PASSWORD` or `SESSION_SECRET` configuration errors, the effective credentials are missing or too short:
+
+- In the panel File Manager, place `.env` directly in `/home/container`, beside `package.json`. The filename must be `.env`; `.env.example` is a template.
+- `npm run setup` generates private credentials when `.env` is absent. It preserves existing files, including templates with blank values. For an existing file, fill `DASHBOARD_PASSWORD` with 12–1,024 characters and `SESSION_SECRET` with a random value of at least 32 characters.
+- Values exported by the panel override `.env`, including blank values. Remove unused blank Startup overrides or set them to the valid credentials from your file.
+- Keep `HOST=0.0.0.0`, set `PORT` to the allocated port, and restart after changing startup configuration. Keep a previously used valid `SESSION_SECRET` stable so saved provider keys remain decryptable.
+
 ## Configuration
 
 Configuration is loaded from `.env` at startup. Bot and provider settings are edited in the dashboard and apply to the next request without restarting the server.
