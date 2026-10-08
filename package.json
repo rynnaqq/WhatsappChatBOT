@@ -1,0 +1,30 @@
+{
+  "name": "whatsapp-ai-chatbot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Self-hosted WhatsApp AI assistant with a live administration dashboard",
+  "type": "module",
+  "engines": { "node": ">=20.0.0" },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "setup": "node scripts/setup.js",
+    "test": "node --test",
+    "test:ui": "node scripts/check-dashboard.js",
+    "check": "node scripts/check-syntax.js"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "7.0.0-rc14",
+    "dotenv": "18.0.6",
+    "express": "5.2.1",
+    "openai": "6.49.0",
+    "pino": "10.4.0",
+    "qrcode": "1.5.4",
+    "undici": "6.29.0",
+    "ws": "8.22.0"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
+    "playwright": "1.64.0"
+  }
+}

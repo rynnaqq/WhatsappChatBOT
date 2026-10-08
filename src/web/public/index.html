@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="Manage your self-hosted WhatsApp AI assistant.">
+  <title>Workspace · Relay</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" type="module"></script>
+</head>
+<body>
+  <a href="#main" class="skip-link">Skip to main content</a>
+  <div class="workspace">
+    <aside class="sidebar" aria-label="Workspace navigation">
+      <a class="brand" href="/"><span class="brand-mark" aria-hidden="true">r</span><span>relay<span class="brand-subtitle">WhatsApp AI</span></span></a>
+      <span class="nav-caption">WORKSPACE</span>
+      <nav aria-label="Dashboard sections">
+        <a href="#connection" class="nav-link active"><span class="nav-icon" aria-hidden="true">◉</span> Connection</a>
+        <a href="#provider" class="nav-link"><span class="nav-icon" aria-hidden="true">◇</span> AI provider</a>
+        <a href="#behavior" class="nav-link"><span class="nav-icon" aria-hidden="true">≡</span> Bot behavior</a>
+        <a href="#advanced" class="nav-link"><span class="nav-icon" aria-hidden="true">⊕</span> Advanced</a>
+      </nav>
+      <div class="sidebar-note"><span class="tiny-dot" aria-hidden="true"></span><strong>Your server. Your assistant.</strong><p>One connected account, with the model you choose.</p></div>
+      <div class="operator"><span class="avatar" aria-hidden="true">A</span><div><strong>Administrator</strong><span>Local workspace</span></div><button id="sign-out" class="text-button" type="button">Sign out</button></div>
+    </aside>
+
+    <div class="content-shell">
+      <header class="topbar"><span>Workspace <span class="breadcrumb" aria-hidden="true">/</span> <strong>Overview</strong></span><div class="live-indicator" role="status"><span class="tiny-dot" aria-hidden="true"></span><span id="live-text">Connecting dashboard…</span></div></header>
+      <main id="main" class="main-content">
+        <div class="page-heading"><div><span class="eyebrow">A LITTLE CONTROL GOES A LONG WAY</span><h1>Your assistant’s workspace.</h1><p>Connect WhatsApp. Choose a model. Make it yours.</p></div><span class="self-hosted">SELF-HOSTED</span></div>
+        <p id="notice" class="notice" role="status" aria-live="polite"></p>
+        <div id="form-error" class="error-summary" role="alert" tabindex="-1" hidden></div>
+        <noscript><p class="error-summary">Enable JavaScript to configure the assistant and receive live pairing codes.</p></noscript>
+
+        <section id="connection" class="card connection-card" aria-labelledby="connection-title">
+          <div class="section-heading"><div><span class="section-number">01</span><h2 id="connection-title">WhatsApp connection</h2></div><span id="status-badge" class="badge disconnected" role="status"><span class="tiny-dot" aria-hidden="true"></span><span id="status-label">Waiting for status</span></span></div>
+          <div class="connection-layout">
+            <div class="connection-detail">
+              <div class="account-line"><span class="account-mark" aria-hidden="true">WA</span><div><span class="field-caption">LINKED ACCOUNT</span><strong id="phone-number">No account linked</strong></div></div>
+              <p id="connection-description">Waiting for a live update from your server.</p>
+              <dl class="connection-meta"><div><dt>Last connected</dt><dd id="connected-at">—</dd></div><div><dt>Session</dt><dd id="session-detail">Waiting for status</dd></div></dl>
+              <p id="session-error" class="field-error" hidden></p>
+              <div class="connection-actions"><button id="restart-session" class="button secondary" type="button"><span aria-hidden="true">↻</span> Restart session</button><button id="logout-whatsapp" class="button subtle-danger" type="button">Log out of WhatsApp</button></div>
+            </div>
+            <div class="pairing-area">
+              <div class="qr-frame"><img id="qr-image" width="190" height="190" alt="WhatsApp pairing QR code. Scan it from Linked devices on your phone." hidden><div id="qr-placeholder"><div class="phone-outline" aria-hidden="true"><span></span></div><strong id="qr-placeholder-title">Waiting for your session</strong><span id="qr-placeholder-note">Your pairing code will appear here.</span></div></div>
+              <p id="qr-caption" class="qr-caption">Open WhatsApp → Linked devices → Link a device.</p>
+            </div>
+          </div>
+        </section>
+
+        <div class="settings-summary" aria-label="Saved configuration"><div><span class="field-caption">MODEL</span><strong id="model-summary">Loading…</strong></div><div><span class="field-caption">CHAT SCOPE</span><strong id="scope-summary">Loading…</strong></div><div><span class="field-caption">CONVERSATION MEMORY</span><strong id="memory-summary">Loading…</strong></div></div>
+
+        <form id="settings-form" action="/api/settings" method="post">
+          <section id="provider" class="card settings-card" aria-labelledby="provider-title">
+            <div class="section-heading"><div><span class="section-number">02</span><h2 id="provider-title">AI provider</h2></div><span id="provider-badge" class="quiet-badge">Loading settings</span></div>
+            <p class="section-intro">Bring your preferred model. Any OpenAI-compatible provider works.</p>
+            <fieldset id="provider-fields" disabled>
+              <legend class="visually-hidden">AI provider settings</legend>
+              <div class="field"><label for="provider-preset">Provider preset</label><select id="provider-preset" name="provider-preset"><option value="openai">OpenAI</option><option value="openrouter">OpenRouter</option><option value="groq">Groq</option><option value="deepseek">DeepSeek</option><option value="ollama">Ollama · local</option><option value="custom">Custom provider</option></select></div>
+              <div class="form-grid">
+                <div class="field"><label for="base-url">Base URL <span class="required-note">required</span></label><input id="base-url" name="ai.baseURL" type="url" required autocomplete="url" spellcheck="false" autocapitalize="off" aria-describedby="base-url-help"><p id="base-url-help" class="hint">The API endpoint, usually ending in /v1.</p></div>
+                <div class="field"><label for="model-name">Model name <span class="required-note">required</span></label><input id="model-name" name="ai.model" type="text" required maxlength="200" spellcheck="false" autocapitalize="off" placeholder="gpt-4o-mini" aria-describedby="model-help"><p id="model-help" class="hint">Use the model identifier from your provider.</p></div>
+              </div>
+              <div class="field"><label for="api-key">API key <span id="key-label-note" class="required-note" aria-hidden="true">required</span></label><div class="password-control"><input id="api-key" name="ai.apiKey" type="password" autocomplete="new-password" spellcheck="false" autocapitalize="off" aria-describedby="api-key-help"><button id="reveal-key" class="reveal-button" type="button" aria-pressed="false">Show</button></div><p id="api-key-help" class="hint">Encrypted on your server. Enter “ollama” for a local Ollama endpoint.</p></div>
+              <div class="form-grid">
+                <div class="field"><label for="temperature">Temperature <span class="input-tag">0–2</span></label><input id="temperature" name="ai.temperature" type="number" min="0" max="2" step="0.1" required inputmode="decimal" aria-describedby="temperature-help"><p id="temperature-help" class="hint">Lower is more focused. Higher is more creative.</p></div>
+                <div class="field"><label for="max-tokens">Max output tokens</label><input id="max-tokens" name="ai.maxTokens" type="number" min="1" max="1048576" step="1" required inputmode="numeric" aria-describedby="tokens-help"><p id="tokens-help" class="hint">Caps response length. Provider limits also apply.</p></div>
+              </div>
+              <label class="toggle-row" for="vision-enabled"><span><strong>Vision enabled</strong><span>Let the assistant understand image messages.</span></span><input id="vision-enabled" name="ai.visionEnabled" type="checkbox" class="switch" role="switch"></label>
+            </fieldset>
+            <div class="card-action-line"><button id="test-connection" class="button secondary" type="button" disabled>Test connection <span aria-hidden="true">↗</span></button><span id="test-hint" class="hint">Save a provider to test its connection.</span></div>
+          </section>
+
+          <section id="behavior" class="card settings-card" aria-labelledby="behavior-title">
+            <div class="section-heading"><div><span class="section-number">03</span><h2 id="behavior-title">Bot behavior</h2></div><span class="quiet-badge">MAKE IT YOURS</span></div>
+            <p class="section-intro">Set the voice, the boundaries, and how much your assistant remembers.</p>
+            <fieldset id="behavior-fields" disabled>
+              <legend class="visually-hidden">Bot behavior settings</legend>
+              <div class="field"><label for="system-prompt">System prompt / persona <span id="prompt-count" class="input-tag">0 / 4,000</span></label><textarea id="system-prompt" name="bot.systemPrompt" rows="4" maxlength="4000" aria-describedby="prompt-help"></textarea><p id="prompt-help" class="hint">Give your assistant a role, tone, and any instructions it should follow.</p></div>
+              <div class="form-grid">
+                <div class="field"><label for="command-prefix">Command prefix</label><input id="command-prefix" name="bot.commandPrefix" type="text" maxlength="5" spellcheck="false" autocapitalize="off" aria-describedby="prefix-help"><p id="prefix-help" class="hint">Leave empty to reply to all eligible messages.</p></div>
+                <div class="field"><label for="memory-limit">Memory limit <span class="input-tag">turns</span></label><input id="memory-limit" name="bot.memoryLimit" type="number" min="0" max="50" step="1" required inputmode="numeric" aria-describedby="memory-help"><p id="memory-help" class="hint">0 disables memory. Memory clears on server restart.</p></div>
+              </div>
+              <div class="toggle-list">
+                <label class="toggle-row" for="private-chats"><span><strong>Private chats only</strong><span>Reply only in one-to-one conversations.</span></span><input id="private-chats" name="bot.privateChatsOnly" type="checkbox" class="switch" role="switch"></label>
+                <label class="toggle-row" for="group-replies"><span><strong>Group chat replies</strong><span id="group-help">Allow the assistant to respond in groups.</span></span><input id="group-replies" name="bot.groupRepliesEnabled" type="checkbox" class="switch" role="switch" aria-describedby="group-help"></label>
+                <label class="toggle-row" for="typing-indicator"><span><strong>Typing indicator</strong><span>Show “typing…” while a reply is being prepared.</span></span><input id="typing-indicator" name="bot.typingIndicator" type="checkbox" class="switch" role="switch"></label>
+              </div>
+            </fieldset>
+          </section>
+
+          <section id="advanced" class="card settings-card" aria-labelledby="advanced-title">
+            <div class="section-heading"><div><span class="section-number">04</span><h2 id="advanced-title">Advanced</h2></div><span class="quiet-badge">LIMITS & PRIVACY</span></div>
+            <p class="section-intro">Keep requests, incoming media, and chat activity within sensible limits.</p>
+            <fieldset id="advanced-fields" disabled>
+              <legend class="visually-hidden">Advanced limits and privacy</legend>
+              <div class="form-grid">
+                <div class="field"><label for="request-timeout">Request timeout <span class="input-tag">seconds</span></label><input id="request-timeout" name="ai.timeoutSeconds" type="number" min="5" max="300" step="1" required inputmode="numeric" aria-describedby="timeout-help"><p id="timeout-help" class="hint">Includes retries and backoff. Between 5 and 300 seconds.</p></div>
+                <div class="field"><label for="image-limit">Image size limit <span class="input-tag">MB</span></label><input id="image-limit" name="ai.maxImageMB" type="number" min="1" max="20" step="1" required inputmode="numeric" aria-describedby="image-help"><p id="image-help" class="hint">Larger images are rejected before encoding.</p></div>
+                <div class="field"><label for="message-age">Maximum message age <span class="input-tag">seconds</span></label><input id="message-age" name="bot.maxMessageAgeSeconds" type="number" min="1" max="3600" step="1" required inputmode="numeric" aria-describedby="age-help"><p id="age-help" class="hint">Skip old messages after reconnecting.</p></div>
+                <div class="field"><label for="chat-rate">Messages per chat <span class="input-tag">per minute</span></label><input id="chat-rate" name="bot.rateLimitPerMinute" type="number" min="1" max="120" step="1" required inputmode="numeric" aria-describedby="rate-help"><p id="rate-help" class="hint">Limits activity in each private or group chat.</p></div>
+              </div>
+              <label class="toggle-row" for="mark-read"><span><strong>Read receipts</strong><span>Mark accepted incoming messages as read.</span></span><input id="mark-read" name="bot.markRead" type="checkbox" class="switch" role="switch"></label>
+            </fieldset>
+          </section>
+
+          <div class="save-bar"><div><strong id="save-state">Loading your settings…</strong><span>Changes take effect on the next message.</span></div><div class="save-actions"><button id="retry-settings" class="button secondary" type="button" hidden>Retry loading</button><button id="save-settings" class="button primary" type="submit" disabled>Save changes <span aria-hidden="true">→</span></button></div></div>
+        </form>
+        <footer class="page-footer"><span>Relay · WhatsApp AI workspace</span><span>Built for the way you work.</span></footer>
+      </main>
+    </div>
+  </div>
+  <dialog id="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-description"><form method="dialog"><span class="eyebrow">SESSION CONTROL</span><h2 id="confirm-title">Restart session?</h2><p id="confirm-description">Your linked account will reconnect using its saved credentials.</p><div class="dialog-actions"><button class="button secondary" value="cancel" autofocus>Cancel</button><button id="confirm-action" class="button primary" type="button">Restart session</button></div></form></dialog>
+</body>
+</html>
