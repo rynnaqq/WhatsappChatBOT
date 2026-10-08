@@ -21,6 +21,17 @@ Open **http://localhost:3000**. The setup command creates a private `.env` file 
 
 The server binds to `127.0.0.1` by default. Set `HOST=0.0.0.0` to reach it from your LAN. Use HTTPS when exposing the dashboard beyond your local machine.
 
+## Pterodactyl / Botkeep deployment
+
+Deploy the complete current `main` branch. An earlier commit omitted `src/storage/settingsRepo.js` and `src/storage/jsonStore.js` because the runtime storage ignore rule also matched source code. The corrected rule excludes only the root `/storage/` directory. Updating npm packages alone cannot restore these application files.
+
+1. Stop the server in the panel, then update the checkout with `git pull --ff-only` or redeploy the latest repository files. Preserve your existing `.env` and root `storage/` data.
+2. Run `npm ci --omit=dev`. Run `npm run setup` if `.env` has not been created; it preserves an existing file.
+3. Set `HOST=0.0.0.0` and set `PORT` to the port allocated by the panel. Set these in `.env` or the process environment; exported environment values take precedence. Keep valid `DASHBOARD_PASSWORD` and `SESSION_SECRET` values.
+4. Set the startup command to `npm start`, then start the server and open the dashboard using the panel's allocated address and port.
+
+The optional npm install-script notices shown for Baileys and protobufjs do not cause the missing local module error. If that error remains after updating, check that both files above exist under `/home/container/src/storage/`; the deployed checkout is still incomplete.
+
 ## Configuration
 
 Configuration is loaded from `.env` at startup. Bot and provider settings are edited in the dashboard and apply to the next request without restarting the server.

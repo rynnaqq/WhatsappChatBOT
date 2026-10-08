@@ -5,16 +5,24 @@ Verified on 2026-10-08 in the supplied Windows workspace.
 | Check | Result |
 | --- | --- |
 | Pinned dependency installation | Passed; package-lock.json saved. |
-| `npm test` on Node 24.20.0 | 89 tests passed; zero failures. |
-| Standalone official Node 20.20.2: `node.exe --test` | 89 tests passed; zero failures. |
+| `npm test` on Node 24.20.0 | 90 tests passed; zero failures or skips. |
+| Standalone official Node 20.20.2: `node.exe --test` | 90 tests passed; zero failures or skips. |
 | Node 20 dependency imports | Baileys socket/auth/media exports and the private Undici dispatcher loaded successfully. |
-| `npm run check` | All application, script, and test JavaScript syntax checks passed. |
+| `npm run check` | All 29 application, script, and test JavaScript syntax checks passed. |
 | `npm run test:ui` | Desktop 1440px and mobile 360px passed. |
 | Browser accessibility | Zero detected axe WCAG 2 A/AA and WCAG 2.1 AA violations on login and dashboard. |
 | `npm audit --omit=dev` | Zero reported production dependency vulnerabilities. |
 | Real application startup | Dashboard served locally, Baileys started, and an authenticated status request reported `qr_required` with a real QR image. |
+| Git distribution regression | A fresh Git staging fixture includes every source module and dashboard asset, while excluding `.env` and root storage credentials. |
+| Clean Git export startup | Exported the staged Git tree, installed production dependencies with `npm ci --omit=dev`, and started the exported application on Node 24.20.0. Health returned HTTP 200 and WhatsApp reached `connecting`. |
 
 The Node 20 check used the official Windows x64 archive, verified against Node.js's published SHA-256 checksum. The test script uses Node's automatic test discovery for compatibility across Windows Node 20 and Node 24. The final running application returned HTTP 200 for health and authenticated status.
+
+## Deployment packaging correction
+
+The original Git commit omitted `src/storage/settingsRepo.js` and `src/storage/jsonStore.js`: its unanchored `storage/` ignore rule matched both runtime storage and application source. Local tests loaded the existing untracked files, so they did not detect an incomplete Git distribution. The rule now excludes only `/storage/`, and both source modules are included in Git.
+
+The new regression reproduced the exact two-file omission before the fix. The corrected Git export starts successfully with freshly installed production dependencies even when npm blocks the optional Baileys/protobufjs install scripts. The Pterodactyl server itself was not accessed; the operator must deploy the updated repository and configure its allocated host/port as described in README.md.
 
 ## Automated acceptance evidence
 
