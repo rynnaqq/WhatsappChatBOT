@@ -1,8 +1,8 @@
-import dotenv from 'dotenv';
 import pino from 'pino';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadEnv } from './config/env.js';
+import { readRuntimeEnv } from './config/runtimeEnv.js';
 import { SettingsRepo } from './storage/settingsRepo.js';
 import { AIService } from './services/aiService.js';
 import { MemoryService } from './services/memoryService.js';
@@ -40,9 +40,8 @@ export async function startApplication(env = process.env) {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  dotenv.config({ quiet: true });
   try {
-    const application = await startApplication();
+    const application = await startApplication(readRuntimeEnv());
     let stopping = false;
     const stop = async () => {
       if (stopping) return;
