@@ -21,6 +21,14 @@ Open **http://localhost:3000**. The setup command creates a private `.env` file 
 
 The server binds to `127.0.0.1` by default. Set `HOST=0.0.0.0` to reach it from your LAN. Use HTTPS when exposing the dashboard beyond your local machine.
 
+## Hosting requirements
+
+Run the bot and dashboard together as one continuously running Node.js process with persistent writable storage. Pterodactyl / Botkeep with a Node.js 24 image supports this deployment model; keep `.env` and the root `storage/` directory across restarts and redeployments.
+
+The complete v1 application is not configured for Vercel. Vercel's Express detection expects a recognized entry file to import Express and expose its application; this project's entry point composes the bot and a web-server factory instead. Adding an Express entry point would also require adapting the runtime: Vercel runs Express as a Function, local storage is ephemeral, and function instances do not share this application's in-memory sessions or WhatsApp state. Vercel now supports WebSockets in public beta, but their connection lifetime is bounded by the function duration. A separate persistent bot backend would be required for a Vercel-hosted dashboard.
+
+References: [Vercel Express deployment](https://vercel.com/docs/frameworks/backend/express), [Vercel WebSocket lifecycle](https://vercel.com/kb/guide/do-vercel-serverless-functions-support-websocket-connections), [Vercel local storage limitations](https://vercel.com/kb/guide/is-sqlite-supported-in-vercel).
+
 ## Pterodactyl / Botkeep deployment
 
 Deploy the complete current `main` branch. An earlier commit omitted `src/storage/settingsRepo.js` and `src/storage/jsonStore.js` because the runtime storage ignore rule also matched source code. The corrected rule excludes only the root `/storage/` directory. Updating npm packages alone cannot restore these application files.
