@@ -78,10 +78,15 @@ Presets are editable starting points. Select a model available to your account; 
 | Groq | `https://api.groq.com/openai/v1` | `openai/gpt-oss-20b` |
 | DeepSeek | `https://api.deepseek.com` | `deepseek-flash` |
 | Ollama | `http://localhost:11434/v1` | `gpt-oss:20b` |
+| 9Router | `http://127.0.0.1:20128/v1` | `oc/muse-spark-1.3-contributor-free` |
 
 Ollama ignores the key, but its OpenAI client still needs a non-empty value: enter `ollama`. Pull your chosen model locally before testing. Model identifiers and provider capabilities can change; the dashboard's test uses your saved provider and makes one small request. The dashboard requires a replacement key when switching to a different provider origin to avoid unintentionally reusing a previous provider's credentials.
 
-Primary references: [OpenRouter](https://openrouter.ai/openai/gpt-4o-mini/providers), [Ollama compatibility](https://docs.ollama.com/api/openai-compatibility), [Groq compatibility](https://console.groq.com/docs/openai), [Groq model changes](https://console.groq.com/docs/deprecations), [DeepSeek quick start](https://api-docs.deepseek.com/en/).
+For 9Router, use a key generated in its dashboard and the full prefixed model ID. Replace the example Base URL with your router's reachable URL when it runs on another computer or server.
+
+Test connection allows up to 1024 output tokens so models with minimum token budgets and reasoning overhead can complete the request. Failed tests show safe guidance and the provider's HTTP status for rejected requests, keys, model IDs, quota, and availability; network failures and timeouts have separate messages. Raw provider errors and keys remain private.
+
+Primary references: [OpenRouter](https://openrouter.ai/openai/gpt-4o-mini/providers), [Ollama compatibility](https://docs.ollama.com/api/openai-compatibility), [Groq compatibility](https://console.groq.com/docs/openai), [Groq model changes](https://console.groq.com/docs/deprecations), [DeepSeek quick start](https://api-docs.deepseek.com/en/), [9Router integration](https://github.com/decolua/9router/blob/master/gitbook/content/en/integration/other-tools.md), [9Router OpenCode models](https://github.com/decolua/9router/blob/master/open-sse/providers/registry/opencode.js).
 
 ## Sessions, storage, and privacy
 

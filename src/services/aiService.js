@@ -5,12 +5,36 @@ import { computeBackoffDelay, isAbortError, isRetryableProviderError } from './r
 
 const MAX_TRANSIENT_RETRIES = 3;
 const GENERIC_ERROR = 'The AI service is temporarily unavailable. Please try again.';
+// Allow provider minimums and reasoning tokens before the short test answer.
+const CONNECTION_TEST_TOKENS = 1024;
+const CONNECTION_TEST_ERRORS = {
+  AI_AUTHENTICATION_FAILED: 'The provider rejected the API key. Check the key for the saved Base URL.',
+  AI_REQUEST_REJECTED: 'The provider rejected the test request. Check the saved model and model parameters.',
+  AI_ACCESS_DENIED: 'The provider denied access. Check that your key has permission to use this model.',
+  AI_MODEL_OR_ENDPOINT_NOT_FOUND: 'The provider URL or model was not found. Check the Base URL and exact model ID.',
+  AI_RATE_LIMITED: 'The provider rate limit or quota was reached. Check your quota and try again later.',
+  AI_PROVIDER_UNAVAILABLE: 'The provider is temporarily unavailable. Try again later.',
+  AI_CONNECTION_FAILED: 'Could not connect to the provider. Check the Base URL and that the router is running and reachable.',
+  AI_TIMEOUT: 'The model test timed out. Try again or increase Timeout in AI provider settings.',
+  AI_TEST_FAILED: 'Could not test the model. Check the saved URL, key, and model, then try again.',
+};
 
 export class UserFacingError extends Error {
   constructor(message) {
     super(message);
     this.name = 'UserFacingError';
     this.code = 'AI_USER_FACING';
+  }
+}
+
+export class AIConnectionTestError extends Error {
+  constructor(code, providerStatus) {
+    const safeCode = typeof code === 'string' && Object.hasOwn(CONNECTION_TEST_ERRORS, code) ? code : 'AI_TEST_FAILED';
+    const safeStatus = Number.isInteger(providerStatus) && providerStatus >= 100 && providerStatus <= 599 ? providerStatus : null;
+    super(`${CONNECTION_TEST_ERRORS[safeCode]}${safeStatus === null ? '' : ` (HTTP ${safeStatus})`}`);
+    this.name = 'AIConnectionTestError';
+    this.code = safeCode;
+    this.providerStatus = safeStatus;
   }
 }
 
@@ -95,7 +119,7 @@ export class AIService {
     const startedAt = performance.now();
     try {
       await this.#completeWithRetries(settings, [{ role: 'user', content: 'Reply with OK.' }], operation, {
-        maxTokens: 1,
+        maxTokens: CONNECTION_TEST_TOKENS,
         temperature: 0,
       });
       return {
@@ -104,7 +128,8 @@ export class AIService {
         latencyMs: Math.max(0, Math.round((performance.now() - startedAt) * 100) / 100),
       };
     } catch (error) {
-      throw this.#toUserFacingError(error, operation.signal);
+      this.#toUserFacingError(error, operation.signal);
+      throw new AIConnectionTestError(connectionTestErrorCode(error, operation.signal), error?.status);
     } finally {
       operation.finish();
     }
@@ -243,4 +268,16 @@ function abortError() {
 
 function safeKind(value) {
   return typeof value === 'string' && /^[A-Z][A-Za-z0-9]{0,63}$/.test(value) ? value : 'Error';
+}
+
+function connectionTestErrorCode(error, signal) {
+  if (signal.aborted || isAbortError(error) || error?.name === 'APIConnectionTimeoutError' || error?.constructor?.name === 'APIConnectionTimeoutError') return 'AI_TIMEOUT';
+  if (error?.status === 400) return 'AI_REQUEST_REJECTED';
+  if (error?.status === 401) return 'AI_AUTHENTICATION_FAILED';
+  if (error?.status === 403) return 'AI_ACCESS_DENIED';
+  if (error?.status === 404) return 'AI_MODEL_OR_ENDPOINT_NOT_FOUND';
+  if (error?.status === 429) return 'AI_RATE_LIMITED';
+  if (Number.isInteger(error?.status) && error.status >= 500 && error.status <= 599) return 'AI_PROVIDER_UNAVAILABLE';
+  if (error?.constructor?.name === 'APIConnectionError' || error?.name === 'APIConnectionError') return 'AI_CONNECTION_FAILED';
+  return 'AI_TEST_FAILED';
 }

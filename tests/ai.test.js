@@ -438,5 +438,102 @@ test('testConnection returns the active model and measured nonnegative latency',
   assert.equal(result.model, 'health-model');
   assert.ok(Number.isFinite(result.latencyMs));
   assert.ok(result.latencyMs >= 0);
-  assert.equal(provider.requests[0].body.max_tokens, 1);
+  assert.ok(provider.requests[0].body.max_tokens >= 16);
+  assert.ok(provider.requests[0].body.max_tokens <= 1024);
+});
+
+test('testConnection works with the Muse minimum of 16 output tokens', async (t) => {
+  const provider = await startProvider(t, ({ request, response }) => {
+    if (request.body.max_tokens < 16) {
+      sendJson(response, 400, {
+        error: {
+          code: 'bad_request',
+          type: 'invalid_request_error',
+          message: '`max_output_tokens` The number must be `>= 16`.',
+          param: 'max_output_tokens',
+        },
+      });
+      return;
+    }
+    sendJson(response, 200, completion('OK'));
+  });
+  const repo = fakeRepo(settings({ ai: { baseURL: provider.baseURL, model: 'oc/muse-spark-1.3-contributor-free' } }));
+  const memory = new MemoryService();
+  const service = new AIService({ settingsRepo: repo, memory, logger: { warn() {}, error() {} } });
+
+  const result = await service.testConnection();
+
+  assert.equal(result.ok, true);
+  assert.equal(result.model, 'oc/muse-spark-1.3-contributor-free');
+  assert.equal(provider.requests.length, 1);
+  assert.deepEqual(provider.requests[0].body.messages, [{ role: 'user', content: 'Reply with OK.' }]);
+  assert.deepEqual(memory.get('test', 3), []);
+});
+
+test('testConnection gives safe diagnostics for authentication and rejected requests', async (t) => {
+  for (const scenario of [
+    { status: 401, code: 'AI_AUTHENTICATION_FAILED', hint: /API key/i },
+    { status: 400, code: 'AI_REQUEST_REJECTED', hint: /model|parameters/i },
+    { status: 403, code: 'AI_ACCESS_DENIED', hint: /access|permission/i },
+    { status: 404, code: 'AI_MODEL_OR_ENDPOINT_NOT_FOUND', hint: /model|URL/i },
+    { status: 429, code: 'AI_RATE_LIMITED', hint: /quota|rate limit/i, attempts: 4 },
+    { status: 503, code: 'AI_PROVIDER_UNAVAILABLE', hint: /unavailable/i, attempts: 4 },
+  ]) {
+    await t.test(`HTTP ${scenario.status}`, async (subtest) => {
+      const provider = await startProvider(subtest, ({ response }) => sendJson(response, scenario.status, {
+        error: { message: 'raw provider detail with provider-secret', code: 'private-provider-code' },
+      }));
+      const logs = [];
+      const repo = fakeRepo(settings({ ai: { baseURL: provider.baseURL } }));
+      const service = new AIService({
+        settingsRepo: repo,
+        memory: new MemoryService(),
+        logger: { error: (...args) => logs.push(args), warn: (...args) => logs.push(args) },
+        sleep: async () => {},
+      });
+
+      await assert.rejects(service.testConnection(), (error) => {
+        assert.equal(error.code, scenario.code);
+        assert.equal(error.providerStatus, scenario.status);
+        assert.match(error.message, scenario.hint);
+        assert.equal(error.message.includes('provider-secret'), false);
+        assert.equal(error.message.includes('raw provider detail'), false);
+        assert.equal(error.message.includes('private-provider-code'), false);
+        return true;
+      });
+      assert.equal(provider.requests.length, scenario.attempts ?? 1);
+      assert.equal(JSON.stringify(logs).includes('provider-secret'), false);
+      assert.equal(JSON.stringify(logs).includes('private-provider-code'), false);
+    });
+  }
+});
+
+test('testConnection distinguishes network failure from timeout', async (t) => {
+  await t.test('network failure', async (subtest) => {
+    const provider = await startProvider(subtest, ({ response }) => response.destroy());
+    const repo = fakeRepo(settings({ ai: { baseURL: provider.baseURL } }));
+    const service = new AIService({ settingsRepo: repo, memory: new MemoryService(), logger: { warn() {}, error() {} }, sleep: async () => {} });
+
+    await assert.rejects(service.testConnection(), (error) => {
+      assert.equal(error.code, 'AI_CONNECTION_FAILED');
+      assert.equal(error.providerStatus, null);
+      assert.match(error.message, /URL|running|connect/i);
+      return true;
+    });
+  });
+  await t.test('timeout', async (subtest) => {
+    const provider = await startProvider(subtest, async ({ response }) => {
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      if (!response.destroyed) sendJson(response, 200, completion('too late'));
+    });
+    const repo = fakeRepo(settings({ ai: { baseURL: provider.baseURL, timeoutSeconds: 0.03 } }));
+    const service = new AIService({ settingsRepo: repo, memory: new MemoryService(), logger: { warn() {}, error() {} } });
+
+    await assert.rejects(service.testConnection(), (error) => {
+      assert.equal(error.code, 'AI_TIMEOUT');
+      assert.equal(error.providerStatus, null);
+      assert.match(error.message, /timed out/i);
+      return true;
+    });
+  });
 });

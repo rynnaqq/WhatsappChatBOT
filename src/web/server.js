@@ -5,6 +5,7 @@ import path from 'node:path';
 import { createAuth, allowedOrigin } from './auth.js';
 import { attachRealtime } from './realtime.js';
 import { SettingsValidationError } from '../storage/settingsRepo.js';
+import { AIConnectionTestError } from '../services/aiService.js';
 
 const publicDir = fileURLToPath(new URL('./public/', import.meta.url));
 
@@ -59,7 +60,10 @@ export function createWebServer({ config, settingsRepo, state, bot, aiService, l
   });
   app.post('/api/ai/test', async (_req, res) => {
     try { res.json(await aiService.testConnection()); }
-    catch { res.status(502).json({ error: 'Could not reach the model. Check the saved URL, key, and model, then try again.' }); }
+    catch (error) {
+      if (error instanceof AIConnectionTestError) return res.status(502).json({ error: error.message, code: error.code, providerStatus: error.providerStatus });
+      res.status(502).json({ error: 'Could not reach the model. Check the saved URL, key, and model, then try again.' });
+    }
   });
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Endpoint not found.' }));
   app.get(['/login', '/login.html'], (req, res) => {

@@ -4,15 +4,18 @@ import { EventEmitter, once } from 'node:events';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import http from 'node:http';
 import { WebSocket } from 'ws';
 import { createWebServer } from '../src/web/server.js';
 import { createAuth } from '../src/web/auth.js';
 import { SettingsRepo } from '../src/storage/settingsRepo.js';
+import { AIService } from '../src/services/aiService.js';
+import { MemoryService } from '../src/services/memoryService.js';
 
 const password = 'test-password-with-20-characters';
 const logger = { info() {}, warn() {}, error() {}, debug() {} };
 
-async function fixture(t) {
+async function fixture(t, { makeAIService } = {}) {
   const storageDir = await mkdtemp(path.join(os.tmpdir(), 'wabot-web-'));
   const config = { port: 0, host: '127.0.0.1', dashboardPassword: password, sessionSecret: 's'.repeat(64), trustProxy: false, sessionTtlMs: 43_200_000 };
   const settingsRepo = new SettingsRepo({ storageDir, encryptionSecret: config.sessionSecret, logger });
@@ -23,7 +26,7 @@ async function fixture(t) {
   state.change = (value) => { current = { ...current, ...value }; state.emit('status', state.snapshot()); };
   const modes = [];
   const bot = { async restart(mode) { modes.push(mode); } };
-  const aiService = { async testConnection() { return { ok: true, model: 'test-model', latencyMs: 1 }; } };
+  const aiService = makeAIService?.(settingsRepo) ?? { async testConnection() { return { ok: true, model: 'test-model', latencyMs: 1 }; } };
   const web = createWebServer({ config, settingsRepo, state, bot, aiService, logger });
   await web.listen();
   const baseURL = `http://127.0.0.1:${web.server.address().port}`;
@@ -102,6 +105,58 @@ test('settings validate full payloads, mask keys, and preserve masked saved keys
   assert.equal(invalid.status, 400);
   assert.ok((await invalid.json()).fields['ai.temperature']);
   assert.equal(f.settingsRepo.get().ai.temperature, 0.7);
+});
+
+test('AI connection tests show safe provider diagnostics using the saved configuration', async (t) => {
+  const requests = [];
+  const provider = http.createServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    requests.push({ url: request.url, authorization: request.headers.authorization, body: JSON.parse(Buffer.concat(chunks).toString('utf8')) });
+    response.writeHead(400, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ error: { message: 'private provider detail with private-router-key', code: 'private-code' } }));
+  });
+  await new Promise((resolve) => provider.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => provider.close(resolve)));
+  const f = await fixture(t, {
+    makeAIService: (settingsRepo) => new AIService({ settingsRepo, memory: new MemoryService(), logger }),
+  });
+  const { cookie } = await f.login();
+  const settings = f.settingsRepo.get();
+  settings.ai.baseURL = `http://127.0.0.1:${provider.address().port}/v1`;
+  settings.ai.apiKey = 'private-router-key';
+  settings.ai.model = 'oc/muse-spark-1.3-contributor-free';
+  assert.equal((await f.post('/api/settings', settings, cookie)).status, 200);
+
+  const result = await f.post('/api/ai/test', {}, cookie);
+  const body = await result.json();
+
+  assert.equal(result.status, 502);
+  assert.equal(body.code, 'AI_REQUEST_REJECTED');
+  assert.equal(body.providerStatus, 400);
+  assert.match(body.error, /model|parameters/i);
+  assert.equal(JSON.stringify(body).includes('private-router-key'), false);
+  assert.equal(JSON.stringify(body).includes('private provider detail'), false);
+  assert.equal(JSON.stringify(body).includes('private-code'), false);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, '/v1/chat/completions');
+  assert.equal(requests[0].authorization, 'Bearer private-router-key');
+  assert.equal(requests[0].body.model, 'oc/muse-spark-1.3-contributor-free');
+});
+
+test('AI connection tests keep unexpected internal errors private', async (t) => {
+  const f = await fixture(t, {
+    makeAIService: () => ({ async testConnection() { throw new Error('private internal error with private-router-key'); } }),
+  });
+  const { cookie } = await f.login();
+
+  const result = await f.post('/api/ai/test', {}, cookie);
+  const body = await result.json();
+
+  assert.equal(result.status, 502);
+  assert.equal(JSON.stringify(body).includes('private-router-key'), false);
+  assert.equal(JSON.stringify(body).includes('private internal error'), false);
+  assert.match(body.error, /model/i);
 });
 
 test('restart validates the mode and acknowledges an accepted lifecycle action', async (t) => {
