@@ -2,7 +2,7 @@
 
 Date: 2026-10-09
 
-Status: Proposed design for review. Application changes have not started.
+Status: Not selected. The operator chose their Pterodactyl server on 2026-10-09. This proposal was not approved or implemented.
 
 ## Outcome and constraints
 
@@ -97,4 +97,4 @@ There is no Cron loop, Workflow supervisor, or automatic replacement chain in th
 - The dashboard displays the deadline and offline state, requires explicit restart, and never implies continuous operation.
 - A real Hobby deployment verifies OIDC access, Drive availability, detached-process readiness, passive lookups, timeout/stop, restart with saved pairing, and an actual phone QR scan. Unit tests and local substitutes do not establish those platform behaviors.
 
-Implementation and account resource creation remain pending design approval. The existing application has not yet been converted or deployed to Vercel under this proposal.
+Retained as an unimplemented alternative. The active deployment uses the existing continuously running Node application on the operator's Pterodactyl server; no Vercel conversion or Vercel resource creation is planned.
