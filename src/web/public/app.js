@@ -101,6 +101,14 @@ function updateFormState() {
   $('#api-key').placeholder = newKeyNeeded ? 'Enter a key for this provider' : 'Saved key · leave empty to keep';
   $('#group-replies').disabled = $('#private-chats').checked || saving;
   $('#group-help').textContent = $('#private-chats').checked ? 'Paused while private chats only is enabled.' : 'Allow the assistant to respond in groups.';
+  const addressedOnly = $('#reply-trigger').value === 'mention-or-reply';
+  $('#command-prefix').disabled = saving || addressedOnly;
+  $('#trigger-help').textContent = addressedOnly
+    ? 'Tag the bot or reply to one of its messages. Other messages are ignored.'
+    : 'Start messages with the command prefix below.';
+  $('#prefix-help').textContent = addressedOnly
+    ? 'Command prefixes are ignored while tags or replies only is selected.'
+    : 'Leave empty to reply to all eligible messages.';
   $('#prompt-count').textContent = `${$('#system-prompt').value.length.toLocaleString()} / 4,000`;
 }
 function fillSettings(settings) {

@@ -24,6 +24,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
       'Only include the answer meant for the user. Do not append unsolicited work summaries, task statuses, skipped/done notes, internal commentary, or notes about unimplemented work. Do not assume the user wants to build software. Offer coding or project help when they ask for it.',
       'When a request is unclear, ask one relevant question. Be honest about your abilities; do not claim you ran tools, edited files, or performed actions unless those actions actually happened.',
     ].join('\n'),
+    replyTrigger: 'prefix',
     commandPrefix: '!',
     memoryLimit: 6,
     privateChatsOnly: false,
@@ -42,7 +43,7 @@ const AI_KEYS = new Set([
   'timeoutSeconds', 'maxImageMB',
 ]);
 const BOT_KEYS = new Set([
-  'systemPrompt', 'commandPrefix', 'memoryLimit', 'privateChatsOnly',
+  'systemPrompt', 'replyTrigger', 'commandPrefix', 'memoryLimit', 'privateChatsOnly',
   'groupRepliesEnabled', 'typingIndicator', 'maxMessageAgeSeconds', 'markRead',
   'rateLimitPerMinute',
 ]);
@@ -227,6 +228,7 @@ function validateAndNormalize(input, { maxTokensCeiling, allowEmptyApiKey, addit
     },
     bot: {
       systemPrompt: bot.systemPrompt,
+      replyTrigger: additionsOptional && bot.replyTrigger === undefined ? DEFAULT_SETTINGS.bot.replyTrigger : bot.replyTrigger,
       commandPrefix: bot.commandPrefix,
       memoryLimit: bot.memoryLimit,
       privateChatsOnly: bot.privateChatsOnly,
@@ -257,6 +259,9 @@ function validateAndNormalize(input, { maxTokensCeiling, allowEmptyApiKey, addit
 
   if (typeof bot.systemPrompt !== 'string') fields['bot.systemPrompt'] = 'Required.';
   else if (bot.systemPrompt.length > 4000) fields['bot.systemPrompt'] = 'Must be at most 4000 characters.';
+  if (!['prefix', 'mention-or-reply'].includes(normalized.bot.replyTrigger)) {
+    fields['bot.replyTrigger'] = 'Choose command prefix or tags and replies only.';
+  }
   if (typeof bot.commandPrefix !== 'string') fields['bot.commandPrefix'] = 'Required.';
   else if (bot.commandPrefix.length > 5) fields['bot.commandPrefix'] = 'Must be at most 5 characters.';
   numberInRange(fields, 'bot.memoryLimit', bot.memoryLimit, 0, 50, true);

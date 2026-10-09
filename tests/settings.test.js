@@ -81,6 +81,45 @@ test('save encrypts the API key at rest and masks every public copy', async (t) 
   assert.match(persisted, /aes-256-gcm/);
 });
 
+test('reply trigger can be saved and restored while preserving the encrypted provider key', async (t) => {
+  const { repo, storageDir } = await makeRepo(t);
+  await repo.save(validSettings({ bot: { replyTrigger: 'mention-or-reply' } }));
+
+  const restored = new SettingsRepo({ storageDir, encryptionSecret: secret });
+  await restored.init();
+  assert.equal(restored.getPublic().bot.replyTrigger, 'mention-or-reply');
+  assert.equal(restored.getPublic().bot.commandPrefix, '!');
+  assert.equal(restored.get().ai.apiKey, 'sk-test-secret');
+  assert.equal(restored.getPublic().ai.apiKey, MASKED_API_KEY);
+
+  const payload = restored.getPublic();
+  payload.bot.replyTrigger = 'prefix';
+  await restored.save(payload);
+  assert.equal(restored.get().bot.replyTrigger, 'prefix');
+  assert.equal(restored.get().ai.apiKey, 'sk-test-secret');
+});
+
+test('reply trigger validation rejects unsupported modes without changing active settings', async (t) => {
+  const { repo } = await makeRepo(t);
+  await repo.save(validSettings({ bot: { replyTrigger: 'mention-or-reply' } }));
+
+  for (const replyTrigger of ['all', '', null, 42]) {
+    await assert.rejects(repo.save(validSettings({ bot: { replyTrigger } })), (error) => {
+      assert.ok(error instanceof SettingsValidationError);
+      assert.ok(error.fields['bot.replyTrigger']);
+      return true;
+    });
+    assert.equal(repo.get().bot.replyTrigger, 'mention-or-reply');
+  }
+});
+
+test('legacy settings retain prefix behavior when the reply trigger field is absent', async (t) => {
+  const { repo } = await makeRepo(t);
+  await repo.save(validSettings({ bot: { commandPrefix: '?' } }));
+  assert.equal(repo.get().bot.replyTrigger, 'prefix');
+  assert.equal(repo.get().bot.commandPrefix, '?');
+});
+
 test('save with the mask preserves the current key even across queued concurrent saves', async (t) => {
   const { repo } = await makeRepo(t);
   await repo.save(validSettings());

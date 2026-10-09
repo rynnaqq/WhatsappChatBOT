@@ -30,8 +30,8 @@ function message(id, text, overrides = {}) {
   };
 }
 
-function socket() {
-  return {
+function socket(overrides = {}) {
+  const sock = {
     user: { id: 'bot:2@s.whatsapp.net' },
     sent: [],
     presence: [],
@@ -40,6 +40,7 @@ function socket() {
     async sendPresenceUpdate(value, jid) { this.presence.push([value, jid]); },
     async readMessages(keys) { this.read.push(keys); },
   };
+  return Object.assign(sock, overrides);
 }
 
 function harness(overrides = {}) {
@@ -139,6 +140,320 @@ test('prefix matching is exact and strips only the leading configured prefix', a
   });
 
   assert.deepEqual(calls.map(({ text }) => text), ['explain !ask']);
+  handler.close();
+});
+
+test('mention-or-reply mode ignores ordinary and prefixed text while legacy prefix mode remains the default', async () => {
+  const mentionMode = harness({
+    settings: settings({ bot: { commandPrefix: '!', replyTrigger: 'mention-or-reply' } }),
+  });
+  await mentionMode.handler.handleUpsert(socket(), {
+    type: 'notify',
+    messages: [message('ordinary', 'hello'), message('prefixed', '!hello')],
+  });
+  assert.equal(mentionMode.calls.length, 0);
+  mentionMode.handler.close();
+
+  for (const replyTrigger of [undefined, 'unexpected']) {
+    const prefixMode = harness({
+      settings: settings({ bot: { commandPrefix: '!', replyTrigger } }),
+    });
+    await prefixMode.handler.handleUpsert(socket(), {
+      type: 'notify',
+      messages: [message(`legacy-${String(replyTrigger)}`, '!hello')],
+    });
+    assert.deepEqual(prefixMode.calls.map(({ text }) => text), ['hello']);
+    prefixMode.handler.close();
+  }
+});
+
+test('bot PN and LID mentions accept device variants and remove only exact bot mention tokens', async () => {
+  const { handler, calls } = harness({
+    settings: settings({ bot: { replyTrigger: 'mention-or-reply' } }),
+  });
+  const sock = socket({
+    user: { id: '15550001:2@s.whatsapp.net', lid: '99880001:7@lid', phoneNumber: '15550001@s.whatsapp.net' },
+  });
+  await handler.handleUpsert(sock, {
+    type: 'notify',
+    messages: [
+      message('pn-tag', '', {
+        payload: {
+          extendedTextMessage: {
+            text: '@15550001 explain this to @22220000 and keep @155500012',
+            contextInfo: { mentionedJid: ['15550001:9@s.whatsapp.net', '22220000@s.whatsapp.net'] },
+          },
+        },
+      }),
+      message('lid-tag', '', {
+        payload: {
+          extendedTextMessage: {
+            text: 'compare this @99880001',
+            contextInfo: { mentionedJid: ['99880001:4@lid'] },
+          },
+        },
+      }),
+      message('numeric-collision', '', {
+        payload: {
+          extendedTextMessage: {
+            text: '@15550001 should not match a LID user',
+            contextInfo: { mentionedJid: ['15550001@lid'] },
+          },
+        },
+      }),
+      message('lid-meta-pn-text', '', {
+        payload: {
+          extendedTextMessage: {
+            text: '@15550001 bridge aliases but preserve @22220000',
+            contextInfo: { mentionedJid: ['99880001@lid', '22220000@s.whatsapp.net'] },
+          },
+        },
+      }),
+      message('pn-meta-lid-text', '', {
+        payload: {
+          extendedTextMessage: {
+            text: 'bridge the other way @99880001',
+            contextInfo: { mentionedJid: ['15550001@s.whatsapp.net'] },
+          },
+        },
+      }),
+      message('other-pn-shares-bot-lid-local', '', {
+        payload: {
+          extendedTextMessage: {
+            text: '@15550001 explain this to @99880001',
+            contextInfo: { mentionedJid: ['15550001@s.whatsapp.net', '99880001@s.whatsapp.net'] },
+          },
+        },
+      }),
+      message('other-lid-shares-bot-pn-local', '', {
+        payload: {
+          extendedTextMessage: {
+            text: '@99880001 explain this to @15550001',
+            contextInfo: { mentionedJid: ['99880001@lid', '15550001@lid'] },
+          },
+        },
+      }),
+    ],
+  });
+
+  assert.deepEqual(calls.map(({ text }) => text), [
+    'explain this to @22220000 and keep @155500012',
+    'compare this',
+    'bridge aliases but preserve @22220000',
+    'bridge the other way',
+    'explain this to @99880001',
+    'explain this to @15550001',
+  ]);
+  handler.close();
+});
+
+test('replies to bot messages work in groups and direct chats without requiring quotedMessage', async () => {
+  const { handler, calls } = harness({
+    settings: settings({ bot: { replyTrigger: 'mention-or-reply' } }),
+  });
+  const sock = socket({ user: { id: '15550001:2@s.whatsapp.net', lid: '99880001@lid' } });
+  await handler.handleUpsert(sock, {
+    type: 'notify',
+    messages: [
+      message('group-reply', '', {
+        remoteJid: 'group-1@g.us',
+        payload: {
+          extendedTextMessage: {
+            text: 'group question',
+            contextInfo: {
+              stanzaId: 'bot-group-message',
+              participant: '99880001:3@lid',
+              remoteJid: 'group-1@g.us',
+            },
+          },
+        },
+      }),
+      message('direct-reply', '', {
+        remoteJid: 'person@s.whatsapp.net',
+        payload: {
+          extendedTextMessage: {
+            text: 'direct question',
+            contextInfo: {
+              stanzaId: 'bot-direct-message',
+              participant: '15550001@s.whatsapp.net',
+              remoteJid: 'person:8@c.us',
+            },
+          },
+        },
+      }),
+      message('plain-reply-keeps-tag-looking-text', '', {
+        payload: {
+          extendedTextMessage: {
+            text: 'keep @15550001 because this is not a mention',
+            contextInfo: {
+              stanzaId: 'bot-plain-reply',
+              participant: '15550001@s.whatsapp.net',
+            },
+          },
+        },
+      }),
+    ],
+  });
+
+  assert.deepEqual(calls.map(({ chatId, text }) => ({ chatId, text })), [
+    { chatId: 'group-1@g.us', text: 'group question' },
+    { chatId: 'person@s.whatsapp.net', text: 'direct question' },
+    { chatId: 'person@s.whatsapp.net', text: 'keep @15550001 because this is not a mention' },
+  ]);
+  handler.close();
+});
+
+test('direct replies accept only the incoming message key PN or LID addressing alias', async () => {
+  const { handler, calls } = harness({
+    settings: settings({ bot: { replyTrigger: 'mention-or-reply' } }),
+  });
+  const sock = socket({ user: { id: '15550001@s.whatsapp.net', lid: '99880001@lid' } });
+  await handler.handleUpsert(sock, {
+    type: 'notify',
+    messages: [
+      message('lid-chat-pn-quote', '', {
+        remoteJid: '70000001@lid',
+        key: { remoteJidAlt: '17770000001@s.whatsapp.net' },
+        payload: {
+          extendedTextMessage: {
+            text: 'PN quote metadata in a LID chat',
+            contextInfo: {
+              stanzaId: 'bot-pn-quote',
+              participant: '15550001@s.whatsapp.net',
+              remoteJid: '17770000001@s.whatsapp.net',
+            },
+          },
+        },
+      }),
+      message('pn-chat-lid-quote', '', {
+        remoteJid: '17770000002@s.whatsapp.net',
+        key: { remoteJidAlt: '70000002@lid' },
+        payload: {
+          extendedTextMessage: {
+            text: 'LID quote metadata in a PN chat',
+            contextInfo: {
+              stanzaId: 'bot-lid-quote',
+              participant: '99880001@lid',
+              remoteJid: '70000002@lid',
+            },
+          },
+        },
+      }),
+    ],
+  });
+
+  assert.deepEqual(calls.map(({ chatId, text }) => ({ chatId, text })), [
+    { chatId: '70000001@lid', text: 'PN quote metadata in a LID chat' },
+    { chatId: '17770000002@s.whatsapp.net', text: 'LID quote metadata in a PN chat' },
+  ]);
+  handler.close();
+});
+
+test('reply metadata fails closed for other authors, incoming participantAlt, cross-chat quotes, and malformed context', async () => {
+  const { handler, calls } = harness({
+    settings: settings({ bot: { replyTrigger: 'mention-or-reply' } }),
+  });
+  const sock = socket({ user: { id: '15550001@s.whatsapp.net', lid: '99880001@lid' } });
+  const reply = (contextInfo) => ({ extendedTextMessage: { text: 'ignore me', contextInfo } });
+  await handler.handleUpsert(sock, {
+    type: 'notify',
+    messages: [
+      message('other-author', '', { payload: reply({ stanzaId: 'quoted', participant: 'other@s.whatsapp.net' }) }),
+      message('participant-alt', '', {
+        payload: reply({ stanzaId: 'quoted', participant: 'other@s.whatsapp.net', participantAlt: '15550001@s.whatsapp.net' }),
+      }),
+      message('reply-numeric-collision', '', {
+        payload: reply({ stanzaId: 'quoted', participant: '15550001@lid' }),
+      }),
+      message('cross-chat', '', {
+        remoteJid: 'group-1@g.us',
+        key: { remoteJidAlt: 'group-2@g.us' },
+        payload: reply({ stanzaId: 'quoted', participant: '15550001@s.whatsapp.net', remoteJid: 'group-2@g.us' }),
+      }),
+      message('missing-stanza', '', { payload: reply({ participant: '15550001@s.whatsapp.net' }) }),
+      message('missing-participant', '', { payload: reply({ stanzaId: 'quoted' }) }),
+    ],
+  });
+
+  assert.equal(calls.length, 0);
+  handler.close();
+});
+
+test('linked bot aliases can come from persisted auth credentials when socket.user is unavailable', async () => {
+  const { handler, calls } = harness({
+    settings: settings({ bot: { replyTrigger: 'mention-or-reply' } }),
+  });
+  const sock = socket({
+    user: undefined,
+    authState: {
+      creds: { me: { id: '15550001:2@s.whatsapp.net', lid: '99880001:7@lid' } },
+    },
+  });
+  await handler.handleUpsert(sock, {
+    type: 'notify',
+    messages: [message('auth-state-tag', '', {
+      payload: {
+        extendedTextMessage: {
+          text: '@99880001 use saved identity',
+          contextInfo: { mentionedJid: ['99880001@lid'] },
+        },
+      },
+    })],
+  });
+
+  assert.deepEqual(calls.map(({ text }) => text), ['use saved identity']);
+  handler.close();
+});
+
+test('mention-or-reply mode ignores tag-only text but gives addressed captionless images the image default', async () => {
+  const { handler, calls } = harness({
+    settings: settings({ bot: { replyTrigger: 'mention-or-reply' } }),
+    downloadImage: async () => ({ buffer: Buffer.from('image'), mimeType: 'image/jpeg' }),
+  });
+  const sock = socket({ user: { id: '15550001@s.whatsapp.net' } });
+  const taggedContext = { mentionedJid: ['15550001@s.whatsapp.net'] };
+  await handler.handleUpsert(sock, {
+    type: 'notify',
+    messages: [
+      message('tag-only', '', {
+        payload: { extendedTextMessage: { text: '@15550001', contextInfo: taggedContext } },
+      }),
+      message('wrapped-image', '', {
+        payload: {
+          ephemeralMessage: {
+            message: { viewOnceMessageV2: { message: { imageMessage: { contextInfo: taggedContext } } } },
+          },
+        },
+      }),
+    ],
+  });
+
+  assert.deepEqual(calls.map(({ text, mimeType }) => ({ text, mimeType })), [
+    { text: 'Describe this image.', mimeType: 'image/jpeg' },
+  ]);
+  handler.close();
+});
+
+test('mention-or-reply mode fails closed when the linked bot identity is absent or malformed', async () => {
+  const { handler, calls } = harness({
+    settings: settings({ bot: { replyTrigger: 'mention-or-reply' } }),
+  });
+  const payload = {
+    extendedTextMessage: {
+      text: '@15550001 hello',
+      contextInfo: { mentionedJid: ['15550001@s.whatsapp.net'] },
+    },
+  };
+  await handler.handleUpsert(socket({ user: undefined }), {
+    type: 'notify',
+    messages: [message('no-identity', '', { payload })],
+  });
+  await handler.handleUpsert(socket({ user: { id: 'malformed' } }), {
+    type: 'notify',
+    messages: [message('bad-identity', '', { payload })],
+  });
+
+  assert.equal(calls.length, 0);
   handler.close();
 });
 

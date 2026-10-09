@@ -1,3 +1,5 @@
+import { jidNormalizedUser } from '@whiskeysockets/baileys';
+
 import { downloadImageMessage } from './mediaService.js';
 
 const GENERIC_FAILURE = "Sorry, I couldn't process that request right now.";
@@ -31,6 +33,16 @@ function extract(content) {
   return null;
 }
 
+function contextInfo(content) {
+  if (content?.extendedTextMessage && typeof content.extendedTextMessage.contextInfo === 'object') {
+    return content.extendedTextMessage.contextInfo;
+  }
+  if (content?.imageMessage && typeof content.imageMessage.contextInfo === 'object') {
+    return content.imageMessage.contextInfo;
+  }
+  return null;
+}
+
 function toNumber(value) {
   if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
   if (typeof value === 'bigint') return value <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(value) : undefined;
@@ -57,14 +69,75 @@ function timestampMs(value) {
 
 function normalizeJid(jid) {
   if (typeof jid !== 'string') return '';
-  const [local, domain = ''] = jid.split('@');
-  return `${local.split(':')[0]}@${domain}`;
+  return jidNormalizedUser(jid);
+}
+
+function normalizeIdentityJid(jid) {
+  const normalized = normalizeJid(jid);
+  return /^[^@:\s]+@(s\.whatsapp\.net|lid|hosted|hosted\.lid)$/.test(normalized) ? normalized : '';
+}
+
+function botIdentities(sock) {
+  const identities = new Set();
+  for (const contact of [sock?.user, sock?.authState?.creds?.me]) {
+    for (const jid of [contact?.id, contact?.lid, contact?.phoneNumber]) {
+      const normalized = normalizeIdentityJid(jid);
+      if (normalized) identities.add(normalized);
+    }
+  }
+  return identities;
 }
 
 function isIgnoredJid(jid, sock) {
   if (typeof jid !== 'string' || !jid) return true;
   if (jid === 'status@broadcast' || jid.endsWith('@broadcast') || jid.endsWith('@newsletter')) return true;
-  return normalizeJid(jid) === normalizeJid(sock?.user?.id);
+  return botIdentities(sock).has(normalizeIdentityJid(jid));
+}
+
+function isCurrentChat(quotedChatId, chatId, chatIdAlt) {
+  if (quotedChatId === undefined || quotedChatId === null) return true;
+  if (typeof quotedChatId !== 'string') return false;
+  const normalizedQuoted = normalizeJid(quotedChatId);
+  const normalizedChat = normalizeJid(chatId);
+  if (normalizedQuoted && normalizedChat && normalizedQuoted === normalizedChat) return true;
+  if (!normalizeIdentityJid(chatId)) return false;
+  const normalizedAlt = normalizeIdentityJid(chatIdAlt);
+  return Boolean(normalizedQuoted && normalizedAlt && normalizedQuoted === normalizedAlt);
+}
+
+function addressedToBot(content, chatId, chatIdAlt, identities) {
+  if (!identities.size) return null;
+  const context = contextInfo(content);
+  if (!context) return null;
+
+  const mentionedJids = Array.isArray(context.mentionedJid)
+    ? context.mentionedJid.map(normalizeIdentityJid).filter(Boolean)
+    : [];
+  const mentionedBotJids = mentionedJids.filter((jid) => identities.has(jid));
+  const otherMentionLocals = new Set(
+    mentionedJids.filter((jid) => !identities.has(jid)).map((jid) => jid.split('@')[0]),
+  );
+  const replyToBot = typeof context.stanzaId === 'string'
+    && context.stanzaId.trim().length > 0
+    && identities.has(normalizeIdentityJid(context.participant))
+    && isCurrentChat(context.remoteJid, chatId, chatIdAlt);
+  if (!mentionedBotJids.length && !replyToBot) return null;
+  return { mentionedBotJids, otherMentionLocals };
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function stripBotMentions(text, botJids, protectedLocals) {
+  let stripped = text;
+  const localParts = new Set(Array.from(botJids, (jid) => jid.split('@')[0]));
+  for (const local of localParts) {
+    if (protectedLocals.has(local)) continue;
+    const mention = new RegExp(`(?<![\\p{L}\\p{N}_@])@${escapeRegExp(local)}(?![\\p{L}\\p{N}_])`, 'gu');
+    stripped = stripped.replace(mention, '');
+  }
+  return stripped.trim();
 }
 
 function safeSettings(value = {}) {
@@ -76,6 +149,7 @@ function safeSettings(value = {}) {
     },
     bot: {
       commandPrefix: typeof value.bot?.commandPrefix === 'string' ? value.bot.commandPrefix : '!',
+      replyTrigger: value.bot?.replyTrigger === 'mention-or-reply' ? 'mention-or-reply' : 'prefix',
       privateChatsOnly: value.bot?.privateChatsOnly === true,
       groupRepliesEnabled: value.bot?.groupRepliesEnabled !== false,
       typingIndicator: value.bot?.typingIndicator !== false,
@@ -205,14 +279,29 @@ export function createMessageHandler({ settingsRepo, aiService, logger, download
       if (sentAt !== undefined && currentTime - sentAt > config.bot.maxMessageAgeSeconds * 1000) continue;
 
       let text = extracted.text;
-      const prefix = config.bot.commandPrefix;
-      if (prefix) {
-        if (!text.startsWith(prefix)) continue;
-        text = text.slice(prefix.length).trimStart();
-      }
-      if (!text.trim()) {
-        if (!extracted.image || prefix && !extracted.text) continue;
-        text = DEFAULT_IMAGE_PROMPT;
+      if (config.bot.replyTrigger === 'mention-or-reply') {
+        const identities = botIdentities(sock);
+        const address = addressedToBot(content, chatId, msg.key?.remoteJidAlt, identities);
+        if (!address) continue;
+        text = stripBotMentions(
+          text,
+          address.mentionedBotJids.length ? identities : [],
+          address.otherMentionLocals,
+        );
+        if (!text.trim()) {
+          if (!extracted.image) continue;
+          text = DEFAULT_IMAGE_PROMPT;
+        }
+      } else {
+        const prefix = config.bot.commandPrefix;
+        if (prefix) {
+          if (!text.startsWith(prefix)) continue;
+          text = text.slice(prefix.length).trimStart();
+        }
+        if (!text.trim()) {
+          if (!extracted.image || prefix && !extracted.text) continue;
+          text = DEFAULT_IMAGE_PROMPT;
+        }
       }
 
       const dedupKey = `${chatId}\u0000${messageId}`;
