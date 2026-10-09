@@ -65,6 +65,8 @@ Configuration is loaded from the project-root `.env` at startup, regardless of t
 
 Default behavior: `!` prefix, six complete conversation turns, group replies enabled, private-only disabled, typing enabled, read receipts off. Advanced settings default to a 60-second AI request budget, 5 MB images, a 120-second freshness window, and 20 accepted messages per minute per chat.
 
+The default persona uses natural WhatsApp conversation, matches the user's language and tone, and keeps casual replies short without unsolicited coding-task summaries. Customize **System prompt / Persona** in the dashboard's bot settings; saved personas stay in place when you update the application.
+
 **Private chats only takes precedence over group replies.** An empty prefix accepts every eligible inbound message. Unsupported media, status updates, broadcasts, self messages, historical batches, duplicates, and old messages are ignored.
 
 ## Providers
