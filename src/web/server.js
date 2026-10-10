@@ -1,7 +1,6 @@
 import express from 'express';
 import http from 'node:http';
 import { fileURLToPath } from 'node:url';
-import path from 'node:path';
 import { createAuth, allowedOrigin } from './auth.js';
 import { attachRealtime } from './realtime.js';
 import { SettingsValidationError } from '../storage/settingsRepo.js';
@@ -68,11 +67,11 @@ export function createWebServer({ config, settingsRepo, state, bot, aiService, l
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Endpoint not found.' }));
   app.get(['/login', '/login.html'], (req, res) => {
     if (auth.getSession(req.headers.cookie)) return res.redirect('/');
-    res.sendFile(path.join(publicDir, 'login.html'));
+    res.sendFile('login.html', { root: publicDir });
   });
   app.get(['/', '/index.html'], (req, res) => {
     if (!auth.getSession(req.headers.cookie)) return res.redirect('/login');
-    res.sendFile(path.join(publicDir, 'index.html'));
+    res.sendFile('index.html', { root: publicDir });
   });
   app.use(express.static(publicDir, { index: false, dotfiles: 'deny', etag: false, maxAge: 0 }));
   app.use((_req, res) => res.status(404).send('Page not found.'));

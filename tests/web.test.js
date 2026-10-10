@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter, once } from 'node:events';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { cp, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import http from 'node:http';
 import { WebSocket } from 'ws';
 import { createWebServer } from '../src/web/server.js';
@@ -52,6 +53,55 @@ test('health is public while the dashboard and all APIs require a session', asyn
   assert.equal((await f.request('/api/settings', { method: 'POST', headers: { 'content-type': 'text/plain' }, body: 'unauthorized' })).status, 401);
   assert.equal((await f.request('/api/settings', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{' })).status, 401);
   assert.deepEqual(f.modes, []);
+});
+
+test('dashboard HTML loads from a project under a hidden directory', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), '.wabot-web-'));
+  let web;
+  t.after(async () => {
+    await web?.close();
+    assert.equal(path.dirname(directory), path.resolve(os.tmpdir()));
+    assert.ok(path.basename(directory).startsWith('.wabot-web-'));
+    await rm(directory, { recursive: true, force: true });
+  });
+  const repositoryRoot = fileURLToPath(new URL('..', import.meta.url));
+  await cp(path.join(repositoryRoot, 'src'), path.join(directory, 'src'), { recursive: true });
+  await symlink(path.join(repositoryRoot, 'node_modules'), path.join(directory, 'node_modules'), 'junction');
+  await writeFile(path.join(directory, 'package.json'), '{"type":"module"}\n');
+  await writeFile(path.join(directory, 'src/web/public/.private'), 'private-dashboard-fixture');
+  const isolated = await import(pathToFileURL(path.join(directory, 'src/web/server.js')).href);
+  const state = new EventEmitter();
+  state.snapshot = () => ({ state: 'disconnected' });
+  web = isolated.createWebServer({
+    config: { port: 0, host: '127.0.0.1', dashboardPassword: password, sessionSecret: 's'.repeat(64), trustProxy: false },
+    settingsRepo: {}, state, bot: {}, aiService: {}, logger,
+  });
+  await web.listen();
+  const baseURL = `http://127.0.0.1:${web.server.address().port}`;
+
+  for (const route of ['/login', '/login.html']) {
+    const response = await fetch(baseURL + route);
+    assert.equal(response.status, 200, `${route} must work under a hidden project ancestor.`);
+    assert.match(response.headers.get('content-type'), /text\/html/);
+    assert.match(await response.text(), /id="login-form"/);
+  }
+  const anonymousHome = await fetch(baseURL + '/', { redirect: 'manual' });
+  assert.equal(anonymousHome.status, 302);
+  assert.equal(anonymousHome.headers.get('location'), '/login');
+  const login = await fetch(baseURL + '/api/auth/login', {
+    method: 'POST', headers: { 'content-type': 'application/json', origin: baseURL },
+    body: JSON.stringify({ password }),
+  });
+  assert.equal(login.status, 200);
+  const cookie = login.headers.get('set-cookie').split(';')[0];
+  for (const route of ['/', '/index.html']) {
+    const response = await fetch(baseURL + route, { headers: { cookie } });
+    assert.equal(response.status, 200, `${route} must work under a hidden project ancestor.`);
+    assert.match(await response.text(), /id="settings-form"/);
+  }
+  const privateFile = await fetch(baseURL + '/.private');
+  assert.equal(privateFile.status, 404);
+  assert.equal((await privateFile.text()).includes('private-dashboard-fixture'), false);
 });
 
 test('login sets a private strict cookie and logout revokes the session', async (t) => {
