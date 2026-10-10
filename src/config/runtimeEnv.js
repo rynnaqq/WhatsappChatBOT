@@ -1,15 +1,20 @@
 import { readFileSync } from 'node:fs';
 import dotenv from 'dotenv';
 
-const defaultFilePath = new URL('../../.env', import.meta.url);
+const defaultFilePath = new URL('../../secrets.env', import.meta.url);
+const legacyFilePath = new URL('../../.env', import.meta.url);
 
 export function readRuntimeEnv({ env = process.env, filePath = defaultFilePath } = {}) {
   let fileValues = {};
-  try {
-    fileValues = dotenv.parse(readFileSync(filePath, 'utf8'));
-  } catch (error) {
-    if (error?.code !== 'ENOENT') {
-      throw new Error('Configuration error:\nUnable to read runtime environment file.');
+  const filePaths = filePath === defaultFilePath ? [defaultFilePath, legacyFilePath] : [filePath];
+  for (const candidate of filePaths) {
+    try {
+      fileValues = dotenv.parse(readFileSync(candidate, 'utf8'));
+      break;
+    } catch (error) {
+      if (error?.code !== 'ENOENT') {
+        throw new Error('Configuration error:\nUnable to read runtime environment file.');
+      }
     }
   }
 

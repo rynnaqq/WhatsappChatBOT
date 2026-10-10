@@ -65,7 +65,7 @@ The source prompt ends before its architecture section, so the layout below is a
 ```
 whatsapp-ai-bot/
 ├── package.json                 # "type": "module"; scripts: start, dev
-├── .env.example                 # PORT, DASHBOARD_PASSWORD, SESSION_SECRET, LOG_LEVEL
+├── secrets.env.example         # PORT, DASHBOARD_PASSWORD, SESSION_SECRET, LOG_LEVEL
 ├── src/
 │   ├── index.js                 # Entry point: starts web server and bot
 │   ├── config/
@@ -339,7 +339,7 @@ Processing pipeline for each `messages.upsert` event:
 
 ## 12. Acceptance Criteria (v1 Release)
 
-- [ ] `npm install && npm start` runs on Node.js 20+ with no errors, given valid `.env` values.
+- [ ] `npm install && npm start` runs on Node.js 20+ with no errors, given valid `secrets.env` values.
 - [ ] Scanning the QR code in the dashboard connects the account, and the status card shows Connected within 5 s.
 - [ ] Sending a text message to the bot receives an AI reply using the configured model.
 - [ ] Sending an image with a caption receives a vision-based reply.

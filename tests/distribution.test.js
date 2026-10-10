@@ -37,10 +37,12 @@ test('Git distribution contains the complete application without runtime secrets
 
   await cp(path.join(projectRoot, 'src'), path.join(directory, 'src'), { recursive: true });
   await cp(path.join(projectRoot, '.gitignore'), path.join(directory, '.gitignore'));
-  await cp(path.join(projectRoot, '.env.example'), path.join(directory, '.env.example'));
+  await cp(path.join(projectRoot, 'secrets.env.example'), path.join(directory, 'secrets.env.example'));
   await mkdir(path.join(directory, 'storage', 'auth_info'), { recursive: true });
   await writeFile(path.join(directory, 'storage', 'auth_info', 'creds.json'), '{"fixture":"private"}');
   await writeFile(path.join(directory, '.env'), 'SESSION_SECRET=synthetic-runtime-secret\n');
+  await writeFile(path.join(directory, 'secrets.env'), 'SESSION_SECRET=synthetic-canonical-secret\n');
+  await writeFile(path.join(directory, 'secrets.env.backup'), 'SESSION_SECRET=synthetic-backup-secret\n');
   runGit(['init', '--quiet']);
   runGit(['add', '--all']);
   const staged = new Set(runGit(['diff', '--cached', '--name-only', '-z']).split('\0').filter(Boolean));
@@ -48,7 +50,9 @@ test('Git distribution contains the complete application without runtime secrets
 
   assert.deepEqual([...staged].filter(file => file.startsWith('src/')).sort(), expected,
     'Every application module and dashboard asset must survive Git packaging.');
-  assert.equal(staged.has('.env.example'), true);
+  assert.equal(staged.has('secrets.env.example'), true);
   assert.equal(staged.has('.env'), false);
+  assert.equal(staged.has('secrets.env'), false);
+  assert.equal(staged.has('secrets.env.backup'), false);
   assert.equal([...staged].some(file => file.startsWith('storage/')), false);
 });

@@ -12,7 +12,7 @@ npm run setup
 npm start
 ```
 
-Open **http://localhost:3000**. The setup command creates a private `.env` file with a random `DASHBOARD_PASSWORD` and `SESSION_SECRET`; read the password from that file to sign in. Running setup again keeps existing credentials.
+Open **http://localhost:3000**. The setup command creates a private `secrets.env` file with a random `DASHBOARD_PASSWORD` and `SESSION_SECRET`; read the password from that file to sign in. Running setup again keeps existing credentials. If only a legacy `.env` exists, setup copies it to `secrets.env` without changing its contents.
 
 1. In **AI provider**, enter the provider URL, key, and model. Save changes and use **Test connection**.
 2. In WhatsApp on your phone, open **Linked devices → Link a device**, then scan the dashboard QR code.
@@ -25,7 +25,7 @@ The server binds to `127.0.0.1` by default. Set `HOST=0.0.0.0` to reach it from 
 
 ## Hosting requirements
 
-Run the bot and dashboard together as one continuously running Node.js process with persistent writable storage. Pterodactyl / Botkeep with a Node.js 24 image supports this deployment model; keep `.env` and the root `storage/` directory across restarts and redeployments.
+Run the bot and dashboard together as one continuously running Node.js process with persistent writable storage. Pterodactyl / Botkeep with a Node.js 24 image supports this deployment model; keep `secrets.env` and the root `storage/` directory across restarts and redeployments.
 
 The complete v1 application is not configured for Vercel. Vercel's Express detection expects a recognized entry file to import Express and expose its application; this project's entry point composes the bot and a web-server factory instead. Adding an Express entry point would also require adapting the runtime: Vercel runs Express as a Function, local storage is ephemeral, and function instances do not share this application's in-memory sessions or WhatsApp state. Vercel now supports WebSockets in public beta, but their connection lifetime is bounded by the function duration. A separate persistent bot backend would be required for a Vercel-hosted dashboard.
 
@@ -35,25 +35,25 @@ References: [Vercel Express deployment](https://vercel.com/docs/frameworks/backe
 
 Deploy the complete current `main` branch. An earlier commit omitted `src/storage/settingsRepo.js` and `src/storage/jsonStore.js` because the runtime storage ignore rule also matched source code. The corrected rule excludes only the root `/storage/` directory. Updating npm packages alone cannot restore these application files.
 
-1. Stop the server in the panel, then update the checkout with `git pull --ff-only` or redeploy the latest repository files. Preserve your existing `.env` and root `storage/` data.
-2. Run `npm ci --omit=dev`. Run `npm run setup` if `.env` has not been created; it preserves an existing file.
-3. The bot automatically uses Pterodactyl's exported `SERVER_PORT`, even if `.env` or a Startup `PORT` still contains an old port. It also binds to `0.0.0.0` on Pterodactyl; leave the Startup `HOST` blank or set it to `0.0.0.0`. Keep valid `DASHBOARD_PASSWORD` and `SESSION_SECRET` values.
+1. Stop the server in the panel, then update the checkout with `git pull --ff-only` or redeploy the latest repository files. Preserve your existing `secrets.env` and root `storage/` data. Preserve a legacy `.env` until setup has copied it to `secrets.env`.
+2. Run `npm ci --omit=dev`. Run `npm run setup` if `secrets.env` has not been created; it preserves an existing file. When only a legacy `.env` exists, setup copies it unchanged to `secrets.env`, preserving the existing `SESSION_SECRET` and encrypted provider key access.
+3. The bot automatically uses Pterodactyl's exported `SERVER_PORT`, even if `secrets.env` or a Startup `PORT` still contains an old port. It also binds to `0.0.0.0` on Pterodactyl; leave the Startup `HOST` blank or set it to `0.0.0.0`. Keep valid `DASHBOARD_PASSWORD` and `SESSION_SECRET` values.
 4. Set the startup command to `npm start`, then start the server and open the dashboard using the panel's allocated address and port.
 
-Changing the primary allocation takes effect on the next server start; no `.env` port edit is needed. Pterodactyl documents `SERVER_PORT` as the primary allocation's port in its [built-in environment variables](https://docs.pterodactyl.io/v1/guides/egg-creation/egg-variables). If a custom host does not export it, set `PORT` to the allocated port and `HOST=0.0.0.0` manually.
+Changing the primary allocation takes effect on the next server start; no `secrets.env` port edit is needed. Pterodactyl documents `SERVER_PORT` as the primary allocation's port in its [built-in environment variables](https://docs.pterodactyl.io/v1/guides/egg-creation/egg-variables). If a custom host does not export it, set `PORT` to the allocated port and `HOST=0.0.0.0` manually.
 
 The optional npm install-script notices shown for Baileys and protobufjs do not cause the missing local module error. If that error remains after updating, check that both files above exist under `/home/container/src/storage/`; the deployed checkout is still incomplete.
 
 If startup reports `DASHBOARD_PASSWORD` or `SESSION_SECRET` configuration errors, the effective credentials are missing or too short:
 
-- In the panel File Manager, place `.env` directly in `/home/container`, beside `package.json`. The filename must be `.env`; `.env.example` is a template.
-- `npm run setup` generates private credentials when `.env` is absent. It preserves existing files, including templates with blank values. For an existing file, fill `DASHBOARD_PASSWORD` with 12–1,024 characters and `SESSION_SECRET` with a random value of at least 32 characters.
-- Empty Startup variables fall back to values in the project-root `.env`. A non-empty Startup value still overrides the file, so replace a short `SESSION_SECRET` with the complete valid value from `.env`, or clear that Startup field to use the file. Required credentials are still validated before startup.
+- In the panel File Manager, place `secrets.env` directly in `/home/container`, beside `package.json`. The filename must be `secrets.env`; `secrets.env.example` is a template.
+- `npm run setup` generates private credentials when both `secrets.env` and legacy `.env` are absent. It preserves an existing `secrets.env`. If only `.env` exists, setup copies its contents unchanged into `secrets.env` instead of generating new credentials. For an existing file, fill `DASHBOARD_PASSWORD` with 12–1,024 characters and `SESSION_SECRET` with a random value of at least 32 characters.
+- Empty Startup variables fall back to values in the project-root `secrets.env`, or to legacy `.env` only when `secrets.env` is absent. The files are never merged. A non-empty Startup value still overrides the selected file, so replace a short `SESSION_SECRET` with the complete valid value from `secrets.env`, or clear that Startup field to use the file. Required credentials are still validated before startup.
 - Leave the Startup `HOST` blank or use `0.0.0.0`, and restart after changing the allocation or startup configuration. Keep a previously used valid `SESSION_SECRET` stable so saved provider keys remain decryptable.
 
 ## Configuration
 
-Configuration is loaded from the project-root `.env` at startup, regardless of the process working directory. Non-empty process environment values override the file. An exported `SERVER_PORT` takes priority over both exported and file `PORT`; without it, `PORT` keeps its usual precedence and local default. A `SERVER_PORT` written only in `.env` does not activate Pterodactyl detection. Bot and provider settings are edited in the dashboard and apply to the next request without restarting the server.
+Configuration is loaded from the project-root `secrets.env` at startup, regardless of the process working directory. Legacy `.env` is used only when `secrets.env` is absent; the two files are never merged. Non-empty process environment values override the selected file. An exported `SERVER_PORT` takes priority over both exported and file `PORT`; without it, `PORT` keeps its usual precedence and local default. A `SERVER_PORT` written only in either file does not activate Pterodactyl detection. Bot and provider settings are edited in the dashboard and apply to the next request without restarting the server.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
@@ -101,8 +101,8 @@ Primary references: [OpenRouter](https://openrouter.ai/openai/gpt-4o-mini/provid
 - **Log out of WhatsApp** removes credentials and immediately starts fresh QR pairing. A remote WhatsApp logout invalidates credentials, stops automatic reconnect, and waits for an operator to restart pairing.
 - **Sign out** ends only the dashboard session. It leaves the WhatsApp connection running.
 - Transient disconnects reconnect with exponential backoff, capped at 60 seconds. Processing and deduplication remain scoped to the bot instance across same-account reconnects.
-- `storage/settings.json` is written atomically through a serialized queue. The provider key is encrypted with AES-256-GCM; API responses expose only a fixed mask. Invalid settings are backed up before defaults are used. Runtime files, `.env`, logs, and test screenshots are Git-ignored.
-- WhatsApp authentication lives in `storage/auth_info`. Back up this directory and `.env` privately. Directory/file permissions are restricted on platforms supporting POSIX modes; use equivalent private ACLs on Windows.
+- `storage/settings.json` is written atomically through a serialized queue. The provider key is encrypted with AES-256-GCM; API responses expose only a fixed mask. Invalid settings are backed up before defaults are used. Runtime files, `secrets.env`, legacy `.env`, logs, and test screenshots are Git-ignored.
+- WhatsApp authentication lives in `storage/auth_info`. Back up this directory and `secrets.env` privately. Directory/file permissions are restricted on platforms supporting POSIX modes; use equivalent private ACLs on Windows.
 - Conversation memory stays in RAM and holds only text. Image history stores `[image sent]` plus its caption. Memory clears on process restart or account logout; abandoned old-account work cannot restore it.
 - Application logs contain events and message IDs, with no message bodies or provider credentials. Baileys' internal logger is silent. Incoming content and current conversation history are sent to the configured AI provider.
 - Image downloads accept only HTTPS media hosts under `whatsapp.net`, including redirects and reupload results. Downloads are bounded by byte count and deadline; their private network dispatcher is destroyed when finished or timed out.

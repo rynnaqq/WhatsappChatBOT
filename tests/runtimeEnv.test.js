@@ -14,6 +14,24 @@ async function temporaryDirectory() {
   return mkdtemp(path.join(os.tmpdir(), 'whatsapp-runtime-env-'));
 }
 
+async function isolatedRuntimeModule(t) {
+  const repositoryRoot = fileURLToPath(new URL('..', import.meta.url));
+  const directory = await temporaryDirectory();
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const moduleDirectory = path.join(directory, 'src', 'config');
+  await mkdir(moduleDirectory, { recursive: true });
+  const modulePath = path.join(moduleDirectory, 'runtimeEnv.js');
+  await copyFile(fileURLToPath(new URL('../src/config/runtimeEnv.js', import.meta.url)), modulePath);
+  await cp(
+    path.join(repositoryRoot, 'node_modules', 'dotenv'),
+    path.join(directory, 'node_modules', 'dotenv'),
+    { recursive: true },
+  );
+  await writeFile(path.join(directory, 'package.json'), '{"type":"module"}\n');
+  const module = await import(pathToFileURL(modulePath).href);
+  return { directory, module };
+}
+
 test('blank exported credentials fall back to valid values in the env file', async (t) => {
   const directory = await temporaryDirectory();
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -170,37 +188,58 @@ test('an unreadable env path produces a safe configuration error', async (t) => 
   );
 });
 
-test('the default env path is anchored to the module project across working directories', async (t) => {
-  const repositoryRoot = fileURLToPath(new URL('..', import.meta.url));
-  const isolatedProject = await temporaryDirectory();
+test('secrets.env is loaded from the module project across working directories', async (t) => {
+  const { directory, module } = await isolatedRuntimeModule(t);
   const otherWorkingDirectory = await temporaryDirectory();
   const originalWorkingDirectory = process.cwd();
   t.after(async () => {
     process.chdir(originalWorkingDirectory);
-    await Promise.all([
-      rm(isolatedProject, { recursive: true, force: true }),
-      rm(otherWorkingDirectory, { recursive: true, force: true }),
-    ]);
+    await rm(otherWorkingDirectory, { recursive: true, force: true });
   });
-  const isolatedModuleDirectory = path.join(isolatedProject, 'src', 'config');
-  await mkdir(isolatedModuleDirectory, { recursive: true });
-  const isolatedModulePath = path.join(isolatedModuleDirectory, 'runtimeEnv.js');
-  await copyFile(fileURLToPath(new URL('../src/config/runtimeEnv.js', import.meta.url)), isolatedModulePath);
-  await cp(
-    path.join(repositoryRoot, 'node_modules', 'dotenv'),
-    path.join(isolatedProject, 'node_modules', 'dotenv'),
-    { recursive: true },
-  );
-  await writeFile(path.join(isolatedProject, 'package.json'), '{"type":"module"}\n');
   await writeFile(
-    path.join(isolatedProject, '.env'),
+    path.join(directory, 'secrets.env'),
     `DASHBOARD_PASSWORD=${validPassword}\nSESSION_SECRET=${validSecret}\nPORT=33506\n`,
   );
   process.chdir(otherWorkingDirectory);
-  const isolatedModule = await import(`${pathToFileURL(isolatedModulePath).href}?test=${Date.now()}`);
 
-  const config = loadEnv(isolatedModule.readRuntimeEnv({ env: {} }));
+  const config = loadEnv(module.readRuntimeEnv({ env: {} }));
 
   assert.equal(config.port, 33506);
   assert.equal(config.sessionSecret, validSecret);
+});
+
+test('secrets.env takes priority without merging credentials or settings from legacy .env', async (t) => {
+  const { directory, module } = await isolatedRuntimeModule(t);
+  await writeFile(path.join(directory, 'secrets.env'), `DASHBOARD_PASSWORD=${validPassword}\nSESSION_SECRET=${validSecret}\nPORT=33506\n`);
+  await writeFile(path.join(directory, '.env'), `DASHBOARD_PASSWORD=legacy-password-123\nSESSION_SECRET=${'b'.repeat(64)}\nPORT=41234\nLOG_LEVEL=warn\n`);
+
+  const config = loadEnv(module.readRuntimeEnv({ env: { SERVER_PORT: '42345', SESSION_SECRET: '' } }));
+
+  assert.equal(config.dashboardPassword, validPassword);
+  assert.equal(config.sessionSecret, validSecret);
+  assert.equal(config.logLevel, 'info');
+  assert.equal(config.port, 42345);
+  assert.equal(config.host, '0.0.0.0');
+});
+
+test('legacy .env remains usable only when secrets.env is absent', async (t) => {
+  const { directory, module } = await isolatedRuntimeModule(t);
+  await writeFile(path.join(directory, '.env'), `DASHBOARD_PASSWORD=${validPassword}\nSESSION_SECRET=${validSecret}\nPORT=33506\n`);
+
+  const config = loadEnv(module.readRuntimeEnv({ env: {} }));
+
+  assert.equal(config.dashboardPassword, validPassword);
+  assert.equal(config.sessionSecret, validSecret);
+  assert.equal(config.port, 33506);
+});
+
+test('an invalid or unreadable secrets.env does not silently use legacy credentials', async (t) => {
+  const { directory, module } = await isolatedRuntimeModule(t);
+  await writeFile(path.join(directory, '.env'), `DASHBOARD_PASSWORD=${validPassword}\nSESSION_SECRET=${validSecret}\n`);
+  const secretsPath = path.join(directory, 'secrets.env');
+  await writeFile(secretsPath, `DASHBOARD_PASSWORD=${validPassword}\nSESSION_SECRET=short\n`);
+  assert.throws(() => loadEnv(module.readRuntimeEnv({ env: {} })), /SESSION_SECRET must contain at least 32 characters/);
+  await rm(secretsPath);
+  await mkdir(secretsPath);
+  assert.throws(() => module.readRuntimeEnv({ env: {} }), /Unable to read runtime environment file/);
 });

@@ -1,8 +1,10 @@
 node_modules/
 /storage/
+secrets.env
+secrets.env.*
+!secrets.env.example
 .env
 .env.*
-!.env.example
 *.log
 test-results/
 .superpowers/
