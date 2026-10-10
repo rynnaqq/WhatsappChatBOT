@@ -143,13 +143,16 @@ test('prefix matching is exact and strips only the leading configured prefix', a
   handler.close();
 });
 
-test('mention-or-reply mode ignores ordinary and prefixed text while legacy prefix mode remains the default', async () => {
+test('mention-or-reply mode ignores ordinary and prefixed group text while legacy prefix mode remains available', async () => {
   const mentionMode = harness({
     settings: settings({ bot: { commandPrefix: '!', replyTrigger: 'mention-or-reply' } }),
   });
   await mentionMode.handler.handleUpsert(socket(), {
     type: 'notify',
-    messages: [message('ordinary', 'hello'), message('prefixed', '!hello')],
+    messages: [
+      message('ordinary', 'hello', { remoteJid: 'group-1@g.us' }),
+      message('prefixed', '!hello', { remoteJid: 'group-1@g.us' }),
+    ],
   });
   assert.equal(mentionMode.calls.length, 0);
   mentionMode.handler.close();
@@ -167,7 +170,108 @@ test('mention-or-reply mode ignores ordinary and prefixed text while legacy pref
   }
 });
 
-test('bot PN and LID mentions accept device variants and remove only exact bot mention tokens', async () => {
+test('mention-or-reply mode answers plain PN and LID private messages without a prefix or reply metadata', async () => {
+  const { handler, calls } = harness({
+    settings: settings({ bot: { commandPrefix: '!', replyTrigger: 'mention-or-reply' } }),
+  });
+  const sock = socket();
+  const incoming = [
+    message('plain-private', 'hello'),
+    message('lid-private', 'apa kabar?', { remoteJid: '70000001@lid' }),
+    message('extended-private', '', { payload: { extendedTextMessage: { text: 'tell me more' } } }),
+    message('literal-prefix-private', '!hello'),
+    message('other-author-private', '', {
+      payload: {
+        extendedTextMessage: {
+          text: 'explain this message',
+          contextInfo: { stanzaId: 'other-message', participant: 'other@s.whatsapp.net' },
+        },
+      },
+    }),
+  ];
+  await handler.handleUpsert(sock, { type: 'notify', messages: incoming });
+
+  assert.deepEqual(calls.map(({ chatId, text }) => ({ chatId, text })), [
+    { chatId: 'person@s.whatsapp.net', text: 'hello' },
+    { chatId: '70000001@lid', text: 'apa kabar?' },
+    { chatId: 'person@s.whatsapp.net', text: 'tell me more' },
+    { chatId: 'person@s.whatsapp.net', text: '!hello' },
+    { chatId: 'person@s.whatsapp.net', text: 'explain this message' },
+  ]);
+  assert.equal(sock.sent.length, 5);
+  assert.deepEqual(new Set(sock.sent.map(({ options }) => options.quoted.key.id)), new Set(incoming.map(({ key }) => key.id)));
+  handler.close();
+});
+
+test('plain private text does not need a linked identity while groups still fail closed without one', async () => {
+  const { handler, calls } = harness({
+    settings: settings({ bot: { replyTrigger: 'mention-or-reply' } }),
+  });
+  const sock = socket({ user: undefined });
+  await handler.handleUpsert(sock, {
+    type: 'notify',
+    messages: [
+      message('private-no-identity', 'hello'),
+      message('group-no-identity', '', {
+        remoteJid: 'group-1@g.us',
+        payload: {
+          extendedTextMessage: { text: '@bot hello', contextInfo: { mentionedJid: ['bot@s.whatsapp.net'] } },
+        },
+      }),
+    ],
+  });
+
+  assert.deepEqual(calls.map(({ chatId, text }) => ({ chatId, text })), [
+    { chatId: 'person@s.whatsapp.net', text: 'hello' },
+  ]);
+  assert.equal(sock.sent.length, 1);
+  handler.close();
+});
+
+test('private captioned and captionless images need no trigger while unaddressed group images are ignored', async () => {
+  const { handler, calls } = harness({
+    settings: settings({ bot: { commandPrefix: '!', replyTrigger: 'mention-or-reply' } }),
+    downloadImage: async () => ({ buffer: Buffer.from('image'), mimeType: 'image/jpeg' }),
+  });
+  await handler.handleUpsert(socket(), {
+    type: 'notify',
+    messages: [
+      message('private-caption', '', { payload: { imageMessage: { caption: 'what is this?' } } }),
+      message('private-no-caption', '', { payload: { imageMessage: {} } }),
+      message('group-no-caption', '', { remoteJid: 'group-1@g.us', payload: { imageMessage: {} } }),
+    ],
+  });
+
+  assert.deepEqual(calls.map(({ text, mimeType }) => ({ text, mimeType })), [
+    { text: 'what is this?', mimeType: 'image/jpeg' },
+    { text: 'Describe this image.', mimeType: 'image/jpeg' },
+  ]);
+  handler.close();
+});
+
+test('automatic private replies still ignore empty text, self messages, history, and stale messages', async () => {
+  const { handler, calls } = harness({
+    settings: settings({ bot: { replyTrigger: 'mention-or-reply' } }),
+  });
+  const sock = socket();
+  await handler.handleUpsert(sock, { type: 'append', messages: [message('private-history', 'hello')] });
+  await handler.handleUpsert(sock, {
+    type: 'notify',
+    messages: [
+      message('private-empty', ''),
+      message('private-whitespace', '   '),
+      message('private-from-me', 'hello', { key: { fromMe: true } }),
+      message('private-self', 'hello', { remoteJid: 'bot@s.whatsapp.net' }),
+      message('private-stale', 'hello', { messageTimestamp: Math.floor(Date.now() / 1000) - 180 }),
+    ],
+  });
+
+  assert.equal(calls.length, 0);
+  assert.equal(sock.sent.length, 0);
+  handler.close();
+});
+
+test('group bot PN and LID mentions accept device variants and remove only exact bot mention tokens', async () => {
   const { handler, calls } = harness({
     settings: settings({ bot: { replyTrigger: 'mention-or-reply' } }),
   });
@@ -178,6 +282,7 @@ test('bot PN and LID mentions accept device variants and remove only exact bot m
     type: 'notify',
     messages: [
       message('pn-tag', '', {
+        remoteJid: 'group-1@g.us',
         payload: {
           extendedTextMessage: {
             text: '@15550001 explain this to @22220000 and keep @155500012',
@@ -186,6 +291,7 @@ test('bot PN and LID mentions accept device variants and remove only exact bot m
         },
       }),
       message('lid-tag', '', {
+        remoteJid: 'group-1@g.us',
         payload: {
           extendedTextMessage: {
             text: 'compare this @99880001',
@@ -194,6 +300,7 @@ test('bot PN and LID mentions accept device variants and remove only exact bot m
         },
       }),
       message('numeric-collision', '', {
+        remoteJid: 'group-1@g.us',
         payload: {
           extendedTextMessage: {
             text: '@15550001 should not match a LID user',
@@ -202,6 +309,7 @@ test('bot PN and LID mentions accept device variants and remove only exact bot m
         },
       }),
       message('lid-meta-pn-text', '', {
+        remoteJid: 'group-1@g.us',
         payload: {
           extendedTextMessage: {
             text: '@15550001 bridge aliases but preserve @22220000',
@@ -210,6 +318,7 @@ test('bot PN and LID mentions accept device variants and remove only exact bot m
         },
       }),
       message('pn-meta-lid-text', '', {
+        remoteJid: 'group-1@g.us',
         payload: {
           extendedTextMessage: {
             text: 'bridge the other way @99880001',
@@ -218,6 +327,7 @@ test('bot PN and LID mentions accept device variants and remove only exact bot m
         },
       }),
       message('other-pn-shares-bot-lid-local', '', {
+        remoteJid: 'group-1@g.us',
         payload: {
           extendedTextMessage: {
             text: '@15550001 explain this to @99880001',
@@ -226,6 +336,7 @@ test('bot PN and LID mentions accept device variants and remove only exact bot m
         },
       }),
       message('other-lid-shares-bot-pn-local', '', {
+        remoteJid: 'group-1@g.us',
         payload: {
           extendedTextMessage: {
             text: '@99880001 explain this to @15550001',
@@ -303,7 +414,7 @@ test('replies to bot messages work in groups and direct chats without requiring 
   handler.close();
 });
 
-test('direct replies accept only the incoming message key PN or LID addressing alias', async () => {
+test('private replies stay eligible across incoming PN and LID addressing aliases', async () => {
   const { handler, calls } = harness({
     settings: settings({ bot: { replyTrigger: 'mention-or-reply' } }),
   });
@@ -349,7 +460,7 @@ test('direct replies accept only the incoming message key PN or LID addressing a
   handler.close();
 });
 
-test('reply metadata fails closed for other authors, incoming participantAlt, cross-chat quotes, and malformed context', async () => {
+test('group reply metadata fails closed for other authors, incoming participantAlt, cross-chat quotes, and malformed context', async () => {
   const { handler, calls } = harness({
     settings: settings({ bot: { replyTrigger: 'mention-or-reply' } }),
   });
@@ -358,11 +469,13 @@ test('reply metadata fails closed for other authors, incoming participantAlt, cr
   await handler.handleUpsert(sock, {
     type: 'notify',
     messages: [
-      message('other-author', '', { payload: reply({ stanzaId: 'quoted', participant: 'other@s.whatsapp.net' }) }),
+      message('other-author', '', { remoteJid: 'group-1@g.us', payload: reply({ stanzaId: 'quoted', participant: 'other@s.whatsapp.net' }) }),
       message('participant-alt', '', {
+        remoteJid: 'group-1@g.us',
         payload: reply({ stanzaId: 'quoted', participant: 'other@s.whatsapp.net', participantAlt: '15550001@s.whatsapp.net' }),
       }),
       message('reply-numeric-collision', '', {
+        remoteJid: 'group-1@g.us',
         payload: reply({ stanzaId: 'quoted', participant: '15550001@lid' }),
       }),
       message('cross-chat', '', {
@@ -370,8 +483,8 @@ test('reply metadata fails closed for other authors, incoming participantAlt, cr
         key: { remoteJidAlt: 'group-2@g.us' },
         payload: reply({ stanzaId: 'quoted', participant: '15550001@s.whatsapp.net', remoteJid: 'group-2@g.us' }),
       }),
-      message('missing-stanza', '', { payload: reply({ participant: '15550001@s.whatsapp.net' }) }),
-      message('missing-participant', '', { payload: reply({ stanzaId: 'quoted' }) }),
+      message('missing-stanza', '', { remoteJid: 'group-1@g.us', payload: reply({ participant: '15550001@s.whatsapp.net' }) }),
+      message('missing-participant', '', { remoteJid: 'group-1@g.us', payload: reply({ stanzaId: 'quoted' }) }),
     ],
   });
 
@@ -392,6 +505,7 @@ test('linked bot aliases can come from persisted auth credentials when socket.us
   await handler.handleUpsert(sock, {
     type: 'notify',
     messages: [message('auth-state-tag', '', {
+      remoteJid: 'group-1@g.us',
       payload: {
         extendedTextMessage: {
           text: '@99880001 use saved identity',
@@ -405,7 +519,7 @@ test('linked bot aliases can come from persisted auth credentials when socket.us
   handler.close();
 });
 
-test('mention-or-reply mode ignores tag-only text but gives addressed captionless images the image default', async () => {
+test('group tag-only text is ignored but addressed captionless images use the image default', async () => {
   const { handler, calls } = harness({
     settings: settings({ bot: { replyTrigger: 'mention-or-reply' } }),
     downloadImage: async () => ({ buffer: Buffer.from('image'), mimeType: 'image/jpeg' }),
@@ -416,9 +530,11 @@ test('mention-or-reply mode ignores tag-only text but gives addressed captionles
     type: 'notify',
     messages: [
       message('tag-only', '', {
+        remoteJid: 'group-1@g.us',
         payload: { extendedTextMessage: { text: '@15550001', contextInfo: taggedContext } },
       }),
       message('wrapped-image', '', {
+        remoteJid: 'group-1@g.us',
         payload: {
           ephemeralMessage: {
             message: { viewOnceMessageV2: { message: { imageMessage: { contextInfo: taggedContext } } } },
@@ -434,7 +550,7 @@ test('mention-or-reply mode ignores tag-only text but gives addressed captionles
   handler.close();
 });
 
-test('mention-or-reply mode fails closed when the linked bot identity is absent or malformed', async () => {
+test('group addressing fails closed when the linked bot identity is absent or malformed', async () => {
   const { handler, calls } = harness({
     settings: settings({ bot: { replyTrigger: 'mention-or-reply' } }),
   });
@@ -446,11 +562,11 @@ test('mention-or-reply mode fails closed when the linked bot identity is absent 
   };
   await handler.handleUpsert(socket({ user: undefined }), {
     type: 'notify',
-    messages: [message('no-identity', '', { payload })],
+    messages: [message('no-identity', '', { remoteJid: 'group-1@g.us', payload })],
   });
   await handler.handleUpsert(socket({ user: { id: 'malformed' } }), {
     type: 'notify',
-    messages: [message('bad-identity', '', { payload })],
+    messages: [message('bad-identity', '', { remoteJid: 'group-1@g.us', payload })],
   });
 
   assert.equal(calls.length, 0);

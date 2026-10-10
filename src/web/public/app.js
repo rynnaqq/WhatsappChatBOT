@@ -104,10 +104,10 @@ function updateFormState() {
   const addressedOnly = $('#reply-trigger').value === 'mention-or-reply';
   $('#command-prefix').disabled = saving || addressedOnly;
   $('#trigger-help').textContent = addressedOnly
-    ? 'Tag the bot or reply to one of its messages. Other messages are ignored.'
+    ? 'Answer all eligible private messages. In groups, require a bot tag or reply to the bot.'
     : 'Start messages with the command prefix below.';
   $('#prefix-help').textContent = addressedOnly
-    ? 'Command prefixes are ignored while tags or replies only is selected.'
+    ? 'Command prefixes are ignored while Private chats + group tags/replies is selected.'
     : 'Leave empty to reply to all eligible messages.';
   $('#prompt-count').textContent = `${$('#system-prompt').value.length.toLocaleString()} / 4,000`;
 }

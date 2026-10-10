@@ -282,12 +282,14 @@ export function createMessageHandler({ settingsRepo, aiService, logger, download
       if (config.bot.replyTrigger === 'mention-or-reply') {
         const identities = botIdentities(sock);
         const address = addressedToBot(content, chatId, msg.key?.remoteJidAlt, identities);
-        if (!address) continue;
-        text = stripBotMentions(
-          text,
-          address.mentionedBotJids.length ? identities : [],
-          address.otherMentionLocals,
-        );
+        if (isGroup && !address) continue;
+        if (address) {
+          text = stripBotMentions(
+            text,
+            address.mentionedBotJids.length ? identities : [],
+            address.otherMentionLocals,
+          );
+        }
         if (!text.trim()) {
           if (!extracted.image) continue;
           text = DEFAULT_IMAGE_PROMPT;

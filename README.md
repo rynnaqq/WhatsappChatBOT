@@ -19,7 +19,7 @@ Open **http://localhost:3000**. The setup command creates a private `secrets.env
 3. From a different WhatsApp account, send `!Hello`. With the default prefix, messages without `!` are ignored.
 4. For images, use a vision-capable model and send an image with a caption such as `!Describe this image`. To handle images without captions, leave the command prefix empty.
 
-To use tags and replies instead of commands, set **Bot behavior → Reply trigger → Tags or replies only** and save. In a group, tag the linked WhatsApp account and include your question. In a group or private chat, reply to a message from that account with your next question. A plain `!Hello`, tags of other people, and replies to other people are ignored in this mode. Images sent in a reply to the bot can be handled without a caption when vision is enabled; a bare text tag with no question is ignored.
+To answer ordinary private messages without commands while keeping groups addressed to the bot, set **Bot behavior → Reply trigger → Private chats + group tags/replies** and save. Every eligible private message is accepted, including ordinary text and captioned or captionless images when vision is enabled. In a group, tag the linked WhatsApp account and include your question, or reply to a message from that account in the same chat. Group tags of other people and replies to other people are ignored. A group image reply can be handled without a caption when vision is enabled; a bare group tag with no question is ignored. Existing settings saved as the former **Tags or replies only** mode automatically use this updated behavior.
 
 The server binds to `127.0.0.1` by default. Set `HOST=0.0.0.0` to reach it from your LAN. Use HTTPS when exposing the dashboard beyond your local machine.
 
@@ -72,7 +72,7 @@ Default behavior: `!` prefix, six complete conversation turns, group replies ena
 
 The default persona uses natural WhatsApp conversation, matches the user's language and tone, and keeps casual replies short without unsolicited coding-task summaries. Customize **System prompt / Persona** in the dashboard's bot settings; saved personas stay in place when you update the application.
 
-**Private chats only takes precedence over group replies.** These restrictions apply to both reply triggers. In command-prefix mode, an empty prefix accepts every eligible inbound message. In tags-or-replies mode, the prefix is ignored and the incoming message must tag the linked account or quote a message authored by it in the same chat. Phone-number and WhatsApp LID addresses are supported. Unsupported media, status updates, broadcasts, self messages, historical batches, duplicates, and old messages are ignored.
+**Private chats only takes precedence over group replies.** These restrictions apply to both reply triggers. In command-prefix mode, an empty prefix accepts every eligible inbound message. In **Private chats + group tags/replies** mode, the prefix is ignored: private chats accept every eligible inbound message, while group messages must tag the linked account or quote a message authored by it in the same chat. Phone-number and WhatsApp LID addresses are supported. Unsupported media, status updates, broadcasts, self messages, historical batches, duplicates, and old messages are ignored.
 
 ## Providers
 
