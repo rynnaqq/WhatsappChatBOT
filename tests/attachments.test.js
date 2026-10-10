@@ -198,13 +198,13 @@ test('explicit automatic PDF transport also extracts text locally', async () => 
   assert.match(result.parts[0].text, /Invoice Number:\s+INV-2048/);
 });
 
-test('automatic image-only PDF handling preserves native fallback without OCR', async () => {
+test('automatic image-only PDF handling preserves native fallback when vision is disabled', async () => {
   const buffer = imageOnlyPdfFixture();
   const result = await prepareAttachment(attachment({
     buffer, mimeType: 'application/pdf', fileName: 'scan.pdf',
-  }), { ai: DEFAULT_AI });
+  }), { ai: { ...DEFAULT_AI, visionEnabled: false } });
 
-  assert.equal(result.parts.length, 1);
+  assert.equal(result.parts.filter(part => part.type === 'file').length, 1);
   assert.equal(result.parts[0].type, 'file');
   assert.equal(result.parts[0].file.filename, 'scan.pdf');
   assert.equal(result.parts[0].file.file_data, `data:application/pdf;base64,${buffer.toString('base64')}`);
@@ -368,7 +368,7 @@ test('ZIP traversal, excessive entries, corrupt archives, and encryption flags f
   }
 });
 
-test('legacy Office, executable, unknown binary, and spoofed PDF formats are rejected clearly', async () => {
+test('malformed DOC, executable, unknown binary, and spoofed PDF formats are rejected clearly', async () => {
   const cases = [
     ['old.doc', 'application/msword', Buffer.from([0xd0, 0xcf, 0x11, 0xe0])],
     ['program.exe', 'application/octet-stream', Buffer.from('MZ')],

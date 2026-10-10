@@ -1,5 +1,31 @@
 # Verification
 
+## PDF tables, scans, DOCX and legacy DOC — 2026-10-10
+
+Automatic PDF reading now preserves page-labelled Markdown text and, when visual content is detected and Vision is enabled, sends high-detail JPEGs of every page. This prevents a searchable heading or a text-only first page from hiding scanned tables later in the document. The model is asked to verify row/column associations, merged cells, units, and cross-page continuations. Ordinary text PDFs stay text-only; disabling Vision or selecting an explicit native transport preserves the original PDF route.
+
+DOCX output retains table and merged-cell structure through Markdown/HTML. Legacy binary DOC extraction reads body text, tab-separated table cells, headers, footers, notes, and text boxes in the existing isolated worker. Full compound-file and Word FIB validation rejects invalid or encrypted inputs before extraction, including cyclic allocation chains. It requires no Word or LibreOffice installation.
+
+| Check | Result |
+| --- | --- |
+| Regression before integration | Digital, scanned and mixed PDF cases lacked visual pages; merged DOCX cells lost structure; valid DOC uploads were rejected. New preparation/cache and real incoming-message regressions failed before integration, then passed. |
+| `npm test` on Node 24.20.0 | 236 passed; zero failures, cancellations, or skips. |
+| `npm run check` | All 43 JavaScript files passed. |
+| `npm audit --omit=dev` | Zero reported production dependency vulnerabilities. |
+| PDF page coverage | Real two-page digital, scanned and mixed fixtures each send both numbered pages, including through upload and text-only follow-up. Over 20 visual pages rejects with a split-file instruction instead of partial output. |
+| PDF rendering | Real bundled-font reads succeed through local filesystem paths. A 2480×3508, 300 dpi A4 scan is accepted and downscaled; oversized internal canvases and incomplete-parser warnings reject safely. Page, canvas, PDF loading-task, worker and worker-slot cleanup were reviewed. |
+| DOCX tables | Real OOXML fixture retains a two-column merged heading and Revenue/Cost row-value associations. |
+| Legacy DOC | Licensed real binary fixtures cover table separators, Unicode, headers/footers, notes and text boxes. MIME-specific and generic uploads work through the incoming pipeline and follow-up. Encrypted, obfuscated, spoofed, truncated and cyclic files reject safely. |
+| Cache controls | Visual PDF context requires both media and vision controls; disabling either prevents reuse. Ordinary message history excludes document contents and encoded page images. |
+| Live configured 9Router model | Digital, scanned and mixed synthetic PDFs each produced correct Total-column values from both pages on a follow-up after a content-free acknowledgement. Saved settings stayed byte-for-byte unchanged. |
+| Live Word limitation | DOC/DOCX requests returned HTTP 503, including a repeated bounded probe. A separate ordinary-text control and both text-string/text-array controls also returned HTTP 503 with provider-unavailable responses. Local extraction and controlled-provider delivery passed; live Word recognition was not established in this run. |
+| Independent review | No remaining helper or integration blockers after fixes for DOC allocation validation, PDF asset paths, canvas allocation bounds, and parser warnings. Final scan compatibility separates output-page limits from internal image limits. |
+| Complete source package | The complete 79-entry ZIP passed a fresh `npm ci --omit=dev --ignore-scripts`, 110 packaged document/AI/context/incoming-message tests, and exported CLI health/login/authenticated-settings checks on its assigned port. Synthetic `secrets.env`, legacy `.env`, encrypted settings and an existing auth marker stayed byte-for-byte unchanged. Only the isolated unpaired fixture process was started and stopped. |
+
+Visual PDF limits are 20 pages and 8 MiB total JPEG data, with no page sampling. Final page images are capped at 2400 pixels per edge and 4 million pixels; internal image canvases allow 8192 pixels per edge and 16 million pixels. Text extraction remains capped at 60,000 characters with a truncation notice. PDF/Office readers share the two-worker concurrency bound, total AI deadline, and per-document limits. Recognition of blurred or very small table entries still depends on the original scan and model.
+
+These checks used public or synthetic fixtures only. Operator documents and the remote Pterodactyl runtime were not accessed, and the operator's running bot was not restarted. Deployment needs the updated source and dependencies, Automatic attachment format, Files enabled, Vision enabled for visual PDFs, and a vision-capable model.
+
 ## PDF/DOCX reading and follow-ups — 2026-10-10
 
 Investigation reproduced a lost-content follow-up: the upload request contained the extracted document, but the next text-only request received only a filename/type/size placeholder. Automatic PDFs also depended entirely on native model PDF support. Automatic mode now extracts text PDFs locally in the bounded document worker, as it already does for DOCX. Valid scanned PDFs retain native fallback; explicit native formats preserve the original PDF transport. Malformed PDFs receive a safe parsing error.

@@ -23,7 +23,8 @@ const GENERIC_ARCHIVE_MIMES = new Set(['application/octet-stream', 'application/
 const TEXT_MIMES = new Set(['application/csv', 'application/ecmascript', 'application/javascript', 'application/json', 'application/ld+json', 'application/sql', 'application/x-httpd-php', 'application/x-javascript', 'application/xhtml+xml', 'application/xml']);
 const TEXT_EXTENSIONS = new Set(['c', 'cc', 'conf', 'cpp', 'cs', 'css', 'csv', 'go', 'h', 'hpp', 'htm', 'html', 'ini', 'java', 'js', 'json', 'jsx', 'log', 'lua', 'md', 'mjs', 'php', 'properties', 'py', 'rb', 'rs', 'sh', 'sql', 'svg', 'toml', 'ts', 'tsx', 'txt', 'xml', 'yaml', 'yml']);
 const EXECUTABLE_EXTENSIONS = new Set(['apk', 'app', 'bat', 'bin', 'cmd', 'com', 'dll', 'dmg', 'exe', 'jar', 'jscript', 'msi', 'ps1', 'scr', 'vbs']);
-const LEGACY_OFFICE_EXTENSIONS = new Set(['doc', 'xls', 'ppt']);
+const LEGACY_OFFICE_EXTENSIONS = new Set(['xls', 'ppt']);
+const CFB_SIGNATURE = Buffer.from('d0cf11e0a1b11ae1', 'hex');
 
 export class AttachmentUserFacingError extends Error {
   constructor(message) {
@@ -48,8 +49,18 @@ export async function prepareAttachment(attachment, { ai = {}, signal } = {}) {
     }
 
     validateGeneralMedia(buffer, ai);
-    if (LEGACY_OFFICE_EXTENSIONS.has(ext) || ['application/msword', 'application/vnd.ms-excel', 'application/vnd.ms-powerpoint'].includes(mimeType)) {
+    if (LEGACY_OFFICE_EXTENSIONS.has(ext) || ['application/vnd.ms-excel', 'application/vnd.ms-powerpoint'].includes(mimeType)) {
       throw new AttachmentUserFacingError('This legacy Office format is not supported. Save it as DOCX, XLSX, or PPTX and try again.');
+    }
+    const isCompoundFile = buffer.subarray(0, CFB_SIGNATURE.length).equals(CFB_SIGNATURE);
+    if (ext === 'doc' || mimeType === 'application/msword' || (mimeType === 'application/octet-stream' && isCompoundFile)) {
+      if (!isCompoundFile || !['application/msword', 'application/octet-stream'].includes(mimeType) || ext === 'docx') {
+        throw new AttachmentUserFacingError('The DOC file is invalid or does not match its file type.');
+      }
+      if (EXECUTABLE_EXTENSIONS.has(ext) && ext !== 'bin') throw new AttachmentUserFacingError('Executable attachments cannot be processed.');
+      const parsed = await parseDocumentInWorker(buffer, 'doc', signal);
+      throwIfAborted(signal);
+      return textResult('document', fileName, 'application/msword', buffer.byteLength, parsed.value, parsed.truncated);
     }
     if (kind === 'audio') return prepareNativeMedia('audio', kind, buffer, mimeType, fileName, ai);
     if (kind === 'video') return prepareNativeMedia('video', kind, buffer, mimeType, fileName, ai);
@@ -69,8 +80,25 @@ export async function prepareAttachment(attachment, { ai = {}, signal } = {}) {
     if (mimeType === 'application/pdf' || ext === 'pdf') {
       if (mimeType !== 'application/pdf' || !buffer.subarray(0, 5).equals(Buffer.from('%PDF-'))) throw new AttachmentUserFacingError('The PDF file is invalid or does not match its file type.');
       if (!isExplicitNativePdfTransport(ai)) {
-        const parsed = await parseDocumentInWorker(buffer, 'pdf', signal);
+        const parsed = await parseDocumentInWorker(buffer, 'pdf', signal, { includeVisuals: ai.visionEnabled === true });
         throwIfAborted(signal);
+        if (parsed.visualPages.length) {
+          const result = textResult('document', fileName, mimeType, buffer.byteLength, parsed.value, parsed.truncated);
+          result.parts[0].text = 'Inspect every numbered PDF page before answering. Use page images to verify tables: keep column headers, row labels, merged cells, units, and table continuations across pages together. Do not guess unreadable numbers; identify the unclear page.\n\n' + result.parts[0].text;
+          for (const page of parsed.visualPages) {
+            result.parts.push(
+              { type: 'text', text: 'Page ' + page.pageNumber + ' of ' + parsed.pageCount },
+              { type: 'image_url', image_url: { url: dataUrl('image/jpeg', Buffer.from(page.bytes)), detail: 'high' } },
+            );
+          }
+          result.requiresVision = true;
+          return result;
+        }
+        if (parsed.requiresNative) {
+          const result = nativeResult('document', buffer, mimeType, fileName, ai);
+          if (parsed.value.trim()) result.parts.push(...textResult('document', fileName, mimeType, buffer.byteLength, parsed.value, parsed.truncated).parts);
+          return result;
+        }
         if (parsed.value.trim()) return textResult('document', fileName, mimeType, buffer.byteLength, parsed.value, parsed.truncated);
       }
       return nativeResult('document', buffer, mimeType, fileName, ai);
@@ -269,7 +297,7 @@ function isSafeArchiveName(name) {
   return !name.split('/').some((part) => part === '..');
 }
 
-async function parseDocumentInWorker(buffer, fileType, signal) {
+async function parseDocumentInWorker(buffer, fileType, signal, { includeVisuals = false } = {}) {
   throwIfAborted(signal);
   if (activeOfficeWorkers >= MAX_ACTIVE_OFFICE_WORKERS) throw new AttachmentUserFacingError('The document reader is busy. Please retry shortly.');
   const label = fileType === 'pdf' ? 'PDF' : 'Office document';
@@ -278,9 +306,9 @@ async function parseDocumentInWorker(buffer, fileType, signal) {
   try {
     const bytes = Uint8Array.from(buffer);
     worker = new Worker(new URL('./officeParserWorker.js', import.meta.url), {
-      workerData: { buffer: bytes.buffer, fileType, maxChars: MAX_TEXT_CHARS },
+      workerData: { buffer: bytes.buffer, fileType, maxChars: MAX_TEXT_CHARS, includeVisuals },
       transferList: [bytes.buffer],
-      resourceLimits: { maxOldGenerationSizeMb: 96, maxYoungGenerationSizeMb: 16, stackSizeMb: 4 },
+      resourceLimits: { maxOldGenerationSizeMb: fileType === 'pdf' ? 128 : 96, maxYoungGenerationSizeMb: 16, stackSizeMb: 4 },
     });
   } catch (error) {
     activeOfficeWorkers -= 1;
@@ -320,15 +348,21 @@ async function parseDocumentInWorker(buffer, fileType, signal) {
       callback();
     };
     const onAbort = () => finishAfterTermination(() => reject(signal.reason ?? new DOMException('The operation was aborted.', 'AbortError')));
-    const timer = setTimeout(() => finishAfterTermination(() => reject(new AttachmentUserFacingError(`The ${label} took too long to process.`))), OFFICE_TIMEOUT_MS);
+    const timer = setTimeout(() => finishAfterTermination(() => reject(new AttachmentUserFacingError(`The ${label} took too long to process.`))), fileType === 'pdf' ? 25_000 : OFFICE_TIMEOUT_MS);
     timer.unref?.();
     signal?.addEventListener('abort', onAbort, { once: true });
     worker.once('message', (message) => finishAfterTermination(() => message?.ok
-      ? resolve({ value: message.text, truncated: Boolean(message.truncated) })
-      : reject(new AttachmentUserFacingError(`The ${label} is corrupt, encrypted, or could not be read safely.`))));
+      ? resolve({ value: message.text, truncated: Boolean(message.truncated), visualPages: Array.isArray(message.visualPages) ? message.visualPages : [], pageCount: message.pageCount, requiresNative: message.requiresNative === true })
+      : reject(documentReadError(message?.errorCode, label))));
     worker.once('error', () => finishAfterTermination(() => reject(new AttachmentUserFacingError(`The ${label} could not be processed safely.`))));
     worker.once('exit', () => finishAfterExit(() => reject(new AttachmentUserFacingError(`The ${label} could not be processed safely.`))));
   });
+}
+
+function documentReadError(code, label) {
+  if (code === 'PDF_VISUAL_PAGE_LIMIT') return new AttachmentUserFacingError('Visual PDF reading supports up to 20 pages. Split this PDF into smaller files to read every page.');
+  if (code === 'PDF_VISUAL_BYTES_LIMIT' || code === 'PDF_CONTENT_LIMIT') return new AttachmentUserFacingError('This PDF exceeds the document reading limits. Split it into smaller files or reduce oversized page images, then try again.');
+  return new AttachmentUserFacingError(`The ${label} is corrupt, encrypted, or could not be read safely.`);
 }
 
 function throwIfAborted(signal) { if (signal?.aborted) throw signal.reason ?? new DOMException('The operation was aborted.', 'AbortError'); }

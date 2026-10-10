@@ -1,5 +1,15 @@
 # Implementation progress
 
+## PDF tables/scans, DOCX and DOC support — 2026-10-10
+
+- Automatic PDF reading combines page-labelled Markdown with high-detail images of every page whenever tables, scans, images, sparse text or column gaps need visual verification. Mixed documents no longer lose scanned pages because another page or heading has searchable text. Simple text PDFs stay text-only; existing native transports remain available.
+- Visual reading accepts up to 20 pages and 8 MiB of JPEG data; exceeding limits returns a clear instruction instead of partial reading. A real 300 dpi A4 scan is accepted and downscaled. Local bundled-font paths, internal canvas bounds, incomplete-page warnings and resource cleanup were verified.
+- DOCX extraction preserves tables and merged cells in Markdown/HTML. Added binary DOC support without Word/LibreOffice: body, table tabs, Unicode, headers/footers, notes and text boxes. Validation rejects invalid, encrypted and cyclic compound files safely in the bounded worker.
+- Added real incoming DOC and mixed-PDF upload/follow-up coverage. Visual PDF context obeys both Files and Vision controls; document contents remain outside ordinary message history and disk storage.
+- Fresh verification passed 236/236 tests, 43 syntax checks, and a production audit with zero advisories. Independent helper/integration review cleared the fixes. Live 9Router follow-ups correctly read numeric table entries across both pages for digital, scanned and mixed PDFs.
+- Live DOC/DOCX verification received HTTP 503; a separate ordinary-text control also returned provider-unavailable HTTP 503. Local extraction and controlled-provider delivery passed. Saved private settings remained unchanged.
+- A complete 79-entry source ZIP passed a fresh production install, 110 packaged document/AI/context/incoming-message tests, and exported CLI health/login/authenticated-settings checks on its assigned port. Overlay and startup preserved synthetic environment files, encrypted settings and pairing marker data. Update instructions require Automatic, Files and Vision for visual PDFs, while preserving existing `secrets.env` and `storage/`.
+
 ## PDF/DOCX reading fix — 2026-10-10
 
 - Reproduced loss of file contents on the text-only question after upload. Added a bounded latest-file context in RAM with history/scope/control checks, fixed upload lifetime, byte/chat eviction, and account-reset protection. Normal input history still stores metadata; files are not written to disk.

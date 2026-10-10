@@ -745,6 +745,27 @@ test('context overflow retry retains the cached file with the follow-up question
   assert.equal(provider.requests[2].body.messages.length, 2);
 });
 
+test('cached visual documents respect both media and vision controls', async (t) => {
+  const provider = await startProvider(t, ({ response }) => sendJson(response, 200, completion('Ready')));
+  for (const disabled of ['visionEnabled', 'mediaEnabled']) {
+    const repo = fakeRepo(settings({ ai: { baseURL: provider.baseURL, mediaEnabled: true } }));
+    const service = new AIService({
+      settingsRepo: repo, memory: new MemoryService(),
+      prepareAttachment: async () => ({
+        parts: [{ type: 'image_url', image_url: { url: 'data:image/jpeg;base64,cGRmLXBhZ2U=' } }],
+        memoryText: '[document sent: ledger.pdf]',
+        requiresVision: true,
+      }),
+    });
+    await service.reply({ chatId: disabled, text: 'Read.', attachment: { kind: 'document', mimeType: 'application/pdf', buffer: Buffer.from('synthetic') } });
+    repo.set(settings({ ai: { baseURL: provider.baseURL, mediaEnabled: true, [disabled]: false } }));
+    await service.reply({ chatId: disabled, text: 'What is the table total?' });
+    const current = provider.requests.at(-1).body.messages.at(-1).content;
+    assert.equal(typeof current, 'string');
+    assert.equal(JSON.stringify(current).includes('cGRmLXBhZ2U='), false);
+  }
+});
+
 test('a failed newer upload removes the previous file from subsequent questions', async (t) => {
   for (const failure of ['provider rejection', 'invalid attachment']) {
     await t.test(failure, async (subtest) => {

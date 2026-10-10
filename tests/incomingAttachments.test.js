@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import { Readable } from 'node:stream';
 import test from 'node:test';
+import { readFile } from 'node:fs/promises';
 import { zipSync } from 'fflate';
 
 import { createMessageHandler } from '../src/bot/messageHandler.js';
@@ -9,6 +10,7 @@ import { downloadImageMessage, downloadIncomingMedia } from '../src/bot/mediaSer
 import { AIService } from '../src/services/aiService.js';
 import { MemoryService } from '../src/services/memoryService.js';
 import { DEFAULT_SETTINGS } from '../src/storage/settingsRepo.js';
+import { tablePdf } from './fixtures/documents.js';
 
 const logger = { info() {}, warn() {}, error() {} };
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -25,7 +27,7 @@ function docx() {
   return Buffer.from(zipSync(Object.fromEntries(Object.entries(files).map(([name, text]) => [name, Buffer.from(text)]))));
 }
 
-async function harness(t) {
+async function harness(t, attachmentTransport = '9router-gemini') {
   const requests = [];
   const server = http.createServer(async (req, res) => {
     let raw = '';
@@ -39,6 +41,7 @@ async function harness(t) {
   const settings = structuredClone(DEFAULT_SETTINGS);
   Object.assign(settings.ai, { baseURL: `http://127.0.0.1:${server.address().port}/v1`, apiKey: 'synthetic-key', model: 'ag/gemini-3.8-flash-high', attachmentTransport: '9router-gemini' });
   Object.assign(settings.bot, { replyTrigger: 'mention-or-reply', typingIndicator: false });
+  settings.ai.attachmentTransport = attachmentTransport;
   const repo = { get: () => structuredClone(settings) };
   const memory = new MemoryService();
   const service = new AIService({ settingsRepo: repo, memory, logger });
@@ -130,4 +133,42 @@ test('a private text reply after a DOCX upload still sends the extracted documen
   assert.match(JSON.stringify(h.requests[1].messages.at(-1).content), /What word is in that file/);
   assert.deepEqual(h.downloads, ['office-upload']);
   assert.equal(h.sock.sent.at(-1).quoted, followup);
+});
+
+test('a legacy DOC upload and follow-up deliver its real table cells through the incoming pipeline', async t => {
+  const h = await harness(t);
+  const bytes = await readFile(new URL('./fixtures/legacy-doc/table.doc', import.meta.url));
+  const upload = h.message('doc-upload', 'documentMessage', bytes, 'application/octet-stream', 'ledger.doc');
+  await h.handler.handleUpsert(h.sock, { type: 'notify', messages: [upload] });
+  const followup = {
+    key: { id: 'doc-followup', remoteJid: 'person@s.whatsapp.net', fromMe: false },
+    messageTimestamp: Math.floor(Date.now() / 1000),
+    message: { conversation: 'Which license is listed in the table?' },
+  };
+  await h.handler.handleUpsert(h.sock, { type: 'notify', messages: [followup] });
+  assert.equal(h.requests.length, 2);
+  for (const request of h.requests) {
+    const text = request.messages.at(-1).content.filter(part => part.type === 'text').map(part => part.text).join('\n');
+    assert.match(text, /License\tGPL v3\.0\tLGPL v3\.0\tBSD\tMIT \(X11\)\tApache v2\.0/);
+  }
+  assert.deepEqual(h.downloads, ['doc-upload']);
+  assert.equal(JSON.stringify(h.memory.get('person@s.whatsapp.net', 6)).includes('GPL v3.0'), false);
+});
+
+test('mixed PDF upload and follow-up retain every visual page through the incoming pipeline', async t => {
+  const h = await harness(t, 'auto');
+  const upload = h.message('pdf-upload', 'documentMessage', tablePdf({ mixed: true }), 'application/pdf', 'ledger.pdf');
+  await h.handler.handleUpsert(h.sock, { type: 'notify', messages: [upload] });
+  const followup = {
+    key: { id: 'pdf-followup', remoteJid: 'person@s.whatsapp.net', fromMe: false },
+    messageTimestamp: Math.floor(Date.now() / 1000),
+    message: { conversation: 'What is the Gamma total on page 2?' },
+  };
+  await h.handler.handleUpsert(h.sock, { type: 'notify', messages: [followup] });
+  assert.equal(h.requests.length, 2);
+  const pages = h.requests.map(request => request.messages.at(-1).content.filter(part => part.type === 'image_url'));
+  assert.equal(pages[0].length, 2);
+  assert.deepEqual(pages[1], pages[0]);
+  assert.deepEqual(h.downloads, ['pdf-upload']);
+  assert.equal(JSON.stringify(h.memory.get('person@s.whatsapp.net', 6)).includes('base64'), false);
 });

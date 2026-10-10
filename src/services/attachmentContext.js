@@ -1,7 +1,7 @@
 const DEFAULT_MAX_BYTES = 32 * 1024 * 1024;
 const DEFAULT_MAX_CHATS = 100;
 const DEFAULT_TTL_MS = 15 * 60 * 1000;
-const CONTROLS = new Set(['vision', 'media']);
+const CONTROLS = new Set(['vision', 'media', 'vision-and-media']);
 
 export class AttachmentContext {
   #maxBytes;
@@ -29,7 +29,7 @@ export class AttachmentContext {
     const clonedParts = cloneJson(parts, 'parts');
     const remembered = assertNonemptyString(memoryText, 'memoryText');
     const scopedTo = assertNonemptyString(scope, 'scope');
-    if (!CONTROLS.has(control)) throw new TypeError('control must be vision or media.');
+    if (!CONTROLS.has(control)) throw new TypeError('control must be vision, media, or vision-and-media.');
     const createdAt = this.#time();
     const bytes = Buffer.byteLength(JSON.stringify({ chatId: id, parts: clonedParts, memoryText: remembered, scope: scopedTo, control }), 'utf8');
 
@@ -66,7 +66,8 @@ export class AttachmentContext {
     const presentInWindow = Array.isArray(history) && history.some((message) => (
       isPlainObject(message) && message.role === 'user' && message.content === entry.memoryText
     ));
-    const controlEnabled = entry.control === 'vision' ? visionEnabled === true : mediaEnabled !== false;
+    const controlEnabled = (entry.control === 'media' || visionEnabled === true)
+      && (entry.control === 'vision' || mediaEnabled !== false);
     if (scope !== entry.scope || !presentInWindow || !controlEnabled) {
       this.#remove(id);
       return undefined;

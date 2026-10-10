@@ -149,7 +149,7 @@ export class AIService {
             parts: prepared.parts,
             memoryText: rememberedText,
             scope: attachmentScope(settings.ai),
-            control: isImage ? 'vision' : 'media',
+            control: isImage ? 'vision' : prepared.requiresVision ? 'vision-and-media' : 'media',
           });
         }
       }
