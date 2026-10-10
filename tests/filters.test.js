@@ -7,7 +7,14 @@ const logger = { debug() {}, info() {}, warn() {}, error() {} };
 
 function settings(overrides = {}) {
   return {
-    ai: { visionEnabled: true, maxImageMB: 5, timeoutSeconds: 60, ...overrides.ai },
+    ai: {
+      visionEnabled: true,
+      mediaEnabled: true,
+      maxImageMB: 5,
+      maxFileMB: 10,
+      timeoutSeconds: 60,
+      ...overrides.ai,
+    },
     bot: {
       commandPrefix: '',
       privateChatsOnly: false,
@@ -54,6 +61,7 @@ function harness(overrides = {}) {
     aiService,
     logger: overrides.logger ?? logger,
     downloadImage: overrides.downloadImage,
+    downloadMedia: overrides.downloadMedia,
     now: overrides.now,
   });
   return { handler, calls };
@@ -90,7 +98,7 @@ test('non-notify, from-me, broadcast, newsletter, self, protocol, and unsupporte
       message('news', 'no', { remoteJid: 'channel@newsletter' }),
       message('self', 'no', { remoteJid: 'bot@s.whatsapp.net' }),
       message('protocol', '', { payload: { protocolMessage: { type: 0 } } }),
-      message('video', '', { payload: { videoMessage: { caption: 'no' } } }),
+      message('contact', '', { payload: { contactMessage: { displayName: 'no' } } }),
     ],
   });
 
@@ -245,6 +253,182 @@ test('private captioned and captionless images need no trigger while unaddressed
   assert.deepEqual(calls.map(({ text, mimeType }) => ({ text, mimeType })), [
     { text: 'what is this?', mimeType: 'image/jpeg' },
     { text: 'Describe this image.', mimeType: 'image/jpeg' },
+  ]);
+  handler.close();
+});
+
+test('private audio, video, PTV, document, and sticker messages reach AI as bounded attachments', async () => {
+  const attachments = {
+    audio: { kind: 'audio', buffer: Buffer.from('audio'), mimeType: 'audio/ogg', fileName: 'voice.ogg' },
+    video: { kind: 'video', buffer: Buffer.from('video'), mimeType: 'video/mp4', fileName: 'video.mp4' },
+    ptv: { kind: 'video', buffer: Buffer.from('ptv'), mimeType: 'video/mp4', fileName: 'video.mp4' },
+    document: { kind: 'document', buffer: Buffer.from('document'), mimeType: 'application/pdf', fileName: 'report.pdf' },
+    sticker: { kind: 'sticker', buffer: Buffer.from('sticker'), mimeType: 'image/webp', fileName: 'sticker.webp' },
+  };
+  const downloaded = [];
+  const { handler, calls } = harness({
+    settings: settings({ ai: { maxImageMB: 4, maxFileMB: 7 } }),
+    downloadMedia: async (msg, _sock, options) => {
+      downloaded.push({ id: msg.key.id, options });
+      return attachments[msg.key.id];
+    },
+  });
+  await handler.handleUpsert(socket(), {
+    type: 'notify',
+    messages: [
+      message('audio', '', { payload: { audioMessage: { ptt: true } } }),
+      message('video', '', { payload: { videoMessage: { caption: 'review this clip' } } }),
+      message('ptv', '', { payload: { ptvMessage: {} } }),
+      message('document', '', { payload: { documentMessage: { caption: 'summarize the report' } } }),
+      message('sticker', '', { payload: { stickerMessage: {} } }),
+    ],
+  });
+
+  assert.deepEqual(calls.map(({ text, attachment }) => ({ text, attachment })), [
+    { text: 'Transcribe this audio.', attachment: attachments.audio },
+    { text: 'review this clip', attachment: attachments.video },
+    { text: 'Describe this video.', attachment: attachments.ptv },
+    { text: 'summarize the report', attachment: attachments.document },
+    { text: 'Describe this sticker.', attachment: attachments.sticker },
+  ]);
+  assert.deepEqual(downloaded.map(({ id, options }) => ({ id, maxBytes: options.maxBytes })), [
+    { id: 'audio', maxBytes: 7 * 1024 * 1024 },
+    { id: 'video', maxBytes: 7 * 1024 * 1024 },
+    { id: 'ptv', maxBytes: 7 * 1024 * 1024 },
+    { id: 'document', maxBytes: 7 * 1024 * 1024 },
+    { id: 'sticker', maxBytes: 4 * 1024 * 1024 },
+  ]);
+  assert.equal(downloaded.every(({ options }) => options.timeoutMs === 60_000), true);
+  handler.close();
+});
+
+test('all attachment contexts route addressed groups and skip unaddressed media before download', async () => {
+  const downloaded = [];
+  const { handler, calls } = harness({
+    settings: settings({ bot: { replyTrigger: 'mention-or-reply' } }),
+    downloadMedia: async (msg) => {
+      downloaded.push(msg.key.id);
+      const kind = msg.key.id.startsWith('document') ? 'document'
+        : msg.key.id.startsWith('sticker') ? 'sticker'
+          : msg.key.id.startsWith('audio') ? 'audio' : 'video';
+      return { kind, buffer: Buffer.from(kind), mimeType: kind === 'document' ? 'application/pdf' : `${kind}/test`, fileName: `${kind}.bin` };
+    },
+  });
+  const sock = socket({ user: { id: '15550001@s.whatsapp.net' } });
+  const addressed = { mentionedJid: ['15550001@s.whatsapp.net'] };
+  const payloads = [
+    ['audio-tagged', { audioMessage: { contextInfo: addressed } }],
+    ['video-tagged', { videoMessage: { contextInfo: addressed } }],
+    ['video-ptv-tagged', { ptvMessage: { contextInfo: addressed } }],
+    ['document-tagged', { documentWithCaptionMessage: { message: { documentMessage: { contextInfo: addressed } } } }],
+    ['sticker-tagged', { ephemeralMessage: { message: { stickerMessage: { contextInfo: addressed } } } }],
+    ['audio-unaddressed', { audioMessage: {} }],
+  ];
+  await handler.handleUpsert(sock, {
+    type: 'notify',
+    messages: payloads.map(([id, payload]) => message(id, '', { remoteJid: 'group-1@g.us', payload })),
+  });
+
+  assert.deepEqual(downloaded, ['audio-tagged', 'video-tagged', 'video-ptv-tagged', 'document-tagged', 'sticker-tagged']);
+  assert.equal(calls.length, 5);
+  assert.equal(sock.sent.length, 5);
+  handler.close();
+});
+
+test('disabled media settings reject before download or AI inference', async () => {
+  let downloads = 0;
+  const { handler, calls } = harness({
+    settings: settings({ ai: { visionEnabled: false, mediaEnabled: false } }),
+    downloadImage: async () => { downloads += 1; throw new Error('must not run'); },
+    downloadMedia: async () => { downloads += 1; throw new Error('must not run'); },
+  });
+  const sock = socket();
+  await handler.handleUpsert(sock, {
+    type: 'notify',
+    messages: [
+      message('disabled-image', '', { payload: { imageMessage: {} } }),
+      message('disabled-sticker', '', { payload: { stickerMessage: {} } }),
+      message('disabled-audio', '', { payload: { audioMessage: {} } }),
+      message('disabled-document', '', { payload: { documentMessage: {} } }),
+    ],
+  });
+
+  assert.equal(downloads, 0);
+  assert.equal(calls.length, 0);
+  assert.deepEqual(sock.sent.map(({ content }) => content.text), [
+    'Image messages are disabled.',
+    'Image messages are disabled.',
+    'File messages are disabled.',
+    'File messages are disabled.',
+  ]);
+  handler.close();
+});
+
+test('image documents use vision enablement and the image byte limit', async () => {
+  const attachment = {
+    kind: 'document', buffer: Buffer.from('png'), mimeType: 'image/png', fileName: 'diagram.png',
+  };
+  let downloadOptions;
+  const { handler, calls } = harness({
+    settings: settings({
+      ai: { visionEnabled: true, mediaEnabled: false, maxImageMB: 2, maxFileMB: 9 },
+    }),
+    downloadMedia: async (_msg, _sock, options) => { downloadOptions = options; return attachment; },
+  });
+
+  await handler.handleUpsert(socket(), {
+    type: 'notify',
+    messages: [message('image-document', '', {
+      payload: { documentMessage: { mimetype: 'image/png', fileName: 'diagram.png' } },
+    })],
+  });
+
+  assert.equal(downloadOptions.maxBytes, 2 * 1024 * 1024);
+  assert.deepEqual(calls.map(({ attachment: value }) => value), [attachment]);
+  handler.close();
+});
+
+test('disabled vision rejects image documents before download even when general media is enabled', async () => {
+  let downloaded = false;
+  const { handler, calls } = harness({
+    settings: settings({ ai: { visionEnabled: false, mediaEnabled: true } }),
+    downloadMedia: async () => { downloaded = true; throw new Error('must not run'); },
+  });
+  const sock = socket();
+
+  await handler.handleUpsert(sock, {
+    type: 'notify',
+    messages: [message('disabled-image-document', '', {
+      payload: { documentMessage: { mimetype: 'image/png', fileName: 'diagram.png' } },
+    })],
+  });
+
+  assert.equal(downloaded, false);
+  assert.equal(calls.length, 0);
+  assert.deepEqual(sock.sent.map(({ content }) => content.text), ['Image messages are disabled.']);
+  handler.close();
+});
+
+test('document-with-caption preserves prefix compatibility and its caption text', async () => {
+  const attachment = { kind: 'document', buffer: Buffer.from('doc'), mimeType: 'application/pdf', fileName: 'doc.pdf' };
+  const downloaded = [];
+  const { handler, calls } = harness({
+    settings: settings({ bot: { commandPrefix: '!ask' } }),
+    downloadMedia: async (msg) => { downloaded.push(msg.key.id); return attachment; },
+  });
+  await handler.handleUpsert(socket(), {
+    type: 'notify',
+    messages: [
+      message('no-prefix-document', '', { payload: { documentMessage: { caption: 'ignore' } } }),
+      message('prefixed-document', '', {
+        payload: { documentWithCaptionMessage: { message: { documentMessage: { caption: '!ask summarize this' } } } },
+      }),
+    ],
+  });
+
+  assert.deepEqual(downloaded, ['prefixed-document']);
+  assert.deepEqual(calls.map(({ text, attachment: value }) => ({ text, attachment: value })), [
+    { text: 'summarize this', attachment },
   ]);
   handler.close();
 });

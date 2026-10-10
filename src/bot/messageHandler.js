@@ -1,10 +1,31 @@
 import { jidNormalizedUser } from '@whiskeysockets/baileys';
 
-import { downloadImageMessage } from './mediaService.js';
+import { downloadImageMessage, downloadIncomingMedia, MediaUserFacingError } from './mediaService.js';
 
 const GENERIC_FAILURE = "Sorry, I couldn't process that request right now.";
 const DEFAULT_IMAGE_PROMPT = 'Describe this image.';
-const WRAPPERS = ['ephemeralMessage', 'viewOnceMessage', 'viewOnceMessageV2', 'viewOnceMessageV2Extension'];
+const DEFAULT_MEDIA_PROMPTS = {
+  image: DEFAULT_IMAGE_PROMPT,
+  sticker: 'Describe this sticker.',
+  audio: 'Transcribe this audio.',
+  video: 'Describe this video.',
+  document: 'Summarize this document.',
+};
+const MEDIA_KEYS = [
+  ['imageMessage', 'image'],
+  ['stickerMessage', 'sticker'],
+  ['audioMessage', 'audio'],
+  ['videoMessage', 'video'],
+  ['ptvMessage', 'video'],
+  ['documentMessage', 'document'],
+];
+const WRAPPERS = [
+  'ephemeralMessage',
+  'viewOnceMessage',
+  'viewOnceMessageV2',
+  'viewOnceMessageV2Extension',
+  'documentWithCaptionMessage',
+];
 const DEDUP_TTL_MS = 10 * 60_000;
 const MAX_DEDUP_ENTRIES = 10_000;
 const MAX_CHAT_QUEUES = 1_000;
@@ -22,12 +43,22 @@ function unwrap(content) {
 
 function extract(content) {
   if (!content || content.protocolMessage) return null;
-  if (typeof content.conversation === 'string') return { text: content.conversation, image: false };
-  if (typeof content.extendedTextMessage?.text === 'string') return { text: content.extendedTextMessage.text, image: false };
-  if (content.imageMessage) {
+  if (typeof content.conversation === 'string') {
+    return { text: content.conversation, mediaKind: null, usesVisionControls: false };
+  }
+  if (typeof content.extendedTextMessage?.text === 'string') {
+    return { text: content.extendedTextMessage.text, mediaKind: null, usesVisionControls: false };
+  }
+  const mediaEntry = MEDIA_KEYS.find(([key]) => content[key]);
+  if (mediaEntry) {
+    const [key, mediaKind] = mediaEntry;
+    const declaredMime = typeof content[key].mimetype === 'string'
+      ? content[key].mimetype.split(';')[0].trim().toLowerCase() : '';
     return {
-      text: typeof content.imageMessage.caption === 'string' ? content.imageMessage.caption : '',
-      image: true,
+      text: typeof content[key].caption === 'string' ? content[key].caption : '',
+      mediaKind,
+      usesVisionControls: mediaKind === 'image' || mediaKind === 'sticker'
+        || mediaKind === 'document' && declaredMime.startsWith('image/'),
     };
   }
   return null;
@@ -37,8 +68,9 @@ function contextInfo(content) {
   if (content?.extendedTextMessage && typeof content.extendedTextMessage.contextInfo === 'object') {
     return content.extendedTextMessage.contextInfo;
   }
-  if (content?.imageMessage && typeof content.imageMessage.contextInfo === 'object') {
-    return content.imageMessage.contextInfo;
+  const mediaEntry = MEDIA_KEYS.find(([key]) => content?.[key]);
+  if (mediaEntry && typeof content[mediaEntry[0]].contextInfo === 'object') {
+    return content[mediaEntry[0]].contextInfo;
   }
   return null;
 }
@@ -143,7 +175,10 @@ function stripBotMentions(text, botJids, protectedLocals) {
 function safeSettings(value = {}) {
   return {
     ai: {
+      visionEnabled: value.ai?.visionEnabled !== false,
+      mediaEnabled: value.ai?.mediaEnabled !== false,
       maxImageMB: Number.isFinite(value.ai?.maxImageMB) && value.ai.maxImageMB > 0 ? value.ai.maxImageMB : 5,
+      maxFileMB: Number.isFinite(value.ai?.maxFileMB) && value.ai.maxFileMB > 0 ? value.ai.maxFileMB : 10,
       timeoutSeconds: Number.isFinite(value.ai?.timeoutSeconds) && value.ai.timeoutSeconds > 0
         ? value.ai.timeoutSeconds : 60,
     },
@@ -169,7 +204,14 @@ function userMessage(error) {
   return GENERIC_FAILURE;
 }
 
-export function createMessageHandler({ settingsRepo, aiService, logger, downloadImage = downloadImageMessage, now = Date.now }) {
+export function createMessageHandler({
+  settingsRepo,
+  aiService,
+  logger,
+  downloadImage = downloadImageMessage,
+  downloadMedia = downloadIncomingMedia,
+  now = Date.now,
+}) {
   const queues = new Map();
   const pending = new Map();
   const dedup = new Map();
@@ -217,7 +259,7 @@ export function createMessageHandler({ settingsRepo, aiService, logger, download
     return tracked;
   }
 
-  async function process(sock, msg, chatId, text, hasImage, config, isActive) {
+  async function process(sock, msg, chatId, text, mediaKind, usesVisionControls, config, isActive) {
     if (closed || !isActive()) return;
     const messageId = msg.key?.id;
     let typingStarted = false;
@@ -229,20 +271,41 @@ export function createMessageHandler({ settingsRepo, aiService, logger, download
         typingStarted = true;
         if (closed || !isActive()) return;
       }
-      let media;
-      if (hasImage) {
-        media = await downloadImage(sock, msg, {
-          maxBytes: Math.floor(config.ai.maxImageMB * 1024 * 1024),
+      let attachment;
+      if (mediaKind) {
+        if (usesVisionControls && !config.ai.visionEnabled) {
+          throw new MediaUserFacingError('Image messages are disabled.');
+        }
+        if (!usesVisionControls && !config.ai.mediaEnabled) {
+          throw new MediaUserFacingError('File messages are disabled.');
+        }
+        const options = {
+          maxBytes: Math.floor((usesVisionControls ? config.ai.maxImageMB : config.ai.maxFileMB) * 1024 * 1024),
           timeoutMs: config.ai.timeoutSeconds * 1000,
           logger,
-        });
+        };
+        if (mediaKind === 'image') {
+          const media = await downloadImage(sock, msg, options);
+          const extensions = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' };
+          attachment = {
+            kind: 'image',
+            buffer: media.buffer,
+            mimeType: media.mimeType,
+            fileName: media.fileName ?? `image.${extensions[media.mimeType] ?? 'bin'}`,
+          };
+        } else {
+          attachment = await downloadMedia(msg, sock, options);
+        }
         if (closed || !isActive()) return;
       }
       if (closed || !isActive()) return;
       const reply = await aiService.reply({
         chatId,
         text,
-        ...(media ? { imageBuffer: media.buffer, mimeType: media.mimeType } : {}),
+        ...(attachment ? { attachment } : {}),
+        ...(attachment?.kind === 'image'
+          ? { imageBuffer: attachment.buffer, mimeType: attachment.mimeType }
+          : {}),
       });
       if (!closed && isActive() && typeof reply === 'string' && reply) {
         await sock.sendMessage(chatId, { text: reply }, { quoted: msg });
@@ -291,8 +354,8 @@ export function createMessageHandler({ settingsRepo, aiService, logger, download
           );
         }
         if (!text.trim()) {
-          if (!extracted.image) continue;
-          text = DEFAULT_IMAGE_PROMPT;
+          if (!extracted.mediaKind) continue;
+          text = DEFAULT_MEDIA_PROMPTS[extracted.mediaKind];
         }
       } else {
         const prefix = config.bot.commandPrefix;
@@ -301,8 +364,8 @@ export function createMessageHandler({ settingsRepo, aiService, logger, download
           text = text.slice(prefix.length).trimStart();
         }
         if (!text.trim()) {
-          if (!extracted.image || prefix && !extracted.text) continue;
-          text = DEFAULT_IMAGE_PROMPT;
+          if (!extracted.mediaKind || prefix && !extracted.text) continue;
+          text = DEFAULT_MEDIA_PROMPTS[extracted.mediaKind];
         }
       }
 
@@ -312,7 +375,16 @@ export function createMessageHandler({ settingsRepo, aiService, logger, download
       dedup.set(dedupKey, currentTime);
       if (!acceptRate(chatId, config.bot.rateLimitPerMinute, currentTime)) continue;
       logger?.debug?.({ event: 'message_accepted', messageId }, 'Message accepted');
-      tasks.push(enqueue(chatId, () => process(sock, msg, chatId, text, extracted.image, config, isActive)));
+      tasks.push(enqueue(chatId, () => process(
+        sock,
+        msg,
+        chatId,
+        text,
+        extracted.mediaKind,
+        extracted.usesVisionControls,
+        config,
+        isActive,
+      )));
     }
     await Promise.all(tasks);
   }

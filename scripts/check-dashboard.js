@@ -44,6 +44,16 @@ const results = [];
 const problems = [];
 await mkdir('test-results', { recursive: true });
 
+async function saveSettings(page) {
+  const [response] = await Promise.all([
+    page.waitForResponse(result => result.url().endsWith('/api/settings') && result.request().method() === 'POST'),
+    page.getByRole('button', { name: 'Save changes', exact: true }).click(),
+  ]);
+  assert.equal(response.status(), 200, 'Settings save must complete successfully');
+  await page.locator('#save-state').filter({ hasText: 'All changes saved' }).waitFor();
+  await page.getByRole('status').filter({ hasText: 'Settings saved' }).waitFor();
+}
+
 try {
   browser = await chromium.launch({ headless: true, ...(process.env.BROWSER_CHANNEL ? { channel: process.env.BROWSER_CHANNEL } : {}) });
   for (const width of [1440, 360]) {
@@ -70,16 +80,20 @@ try {
     await page.getByLabel(/^API key/).fill('fake-browser-provider-key');
     await page.getByLabel('Model name').fill('test-vision-model');
     await page.getByLabel('Command prefix').fill('?');
-    await page.getByRole('button', { name: 'Save changes', exact: true }).click();
-    await page.getByRole('status').filter({ hasText: 'Settings saved' }).waitFor();
+    await page.getByLabel('Files, audio and video').check();
+    await page.getByLabel(/^File size limit/).fill('12');
+    await page.getByLabel('Attachment format', { exact: true }).selectOption('9router-gemini');
+    await saveSettings(page);
     assert.equal(await page.getByLabel(/^API key/).inputValue(), '');
     assert.equal((await page.content()).includes('fake-browser-provider-key'), false);
+    assert.equal(repo.get().ai.mediaEnabled, true);
+    assert.equal(repo.get().ai.maxFileMB, 12);
+    assert.equal(repo.get().ai.attachmentTransport, '9router-gemini');
     await page.getByRole('button', { name: 'Test connection', exact: true }).click();
     await page.getByRole('status').filter({ hasText: 'Connection successful' }).waitFor();
     await page.getByLabel(/^Private chats only/).check();
     assert.equal(await page.getByLabel('Group chat replies').isDisabled(), true);
-    await page.getByRole('button', { name: 'Save changes', exact: true }).click();
-    await page.getByRole('status').filter({ hasText: 'Settings saved' }).waitFor();
+    await saveSettings(page);
     const qr = await QRCode.toDataURL('browser-verification-only');
     state.update({ state: 'qr_required', qr, qrExpiresAt: new Date(Date.now() + 60000).toISOString() });
     state.emit('qr', { dataUrl: qr, expiresInMs: 60000 });
@@ -112,10 +126,15 @@ try {
     await page.reload();
     await page.locator('#save-state').filter({ hasText: 'All changes saved' }).waitFor();
     assert.equal(await page.getByLabel('Command prefix').inputValue(), '?');
+    assert.equal(await page.getByLabel('Files, audio and video').isChecked(), true);
+    assert.equal(await page.getByLabel(/^File size limit/).inputValue(), '12');
+    assert.equal(await page.getByLabel('Attachment format', { exact: true }).inputValue(), '9router-gemini');
+    await page.getByLabel('Files, audio and video').uncheck();
+    await saveSettings(page);
+    assert.equal(repo.get().ai.mediaEnabled, false);
     await page.getByLabel('Reply trigger', { exact: true }).selectOption('mention-or-reply');
     assert.equal(await page.getByLabel('Command prefix').isDisabled(), true);
-    await page.getByRole('button', { name: 'Save changes', exact: true }).click();
-    await page.getByRole('status').filter({ hasText: 'Settings saved' }).waitFor();
+    await saveSettings(page);
     assert.equal(repo.get().bot.replyTrigger, 'mention-or-reply');
     assert.equal(repo.get().bot.commandPrefix, '?');
     await page.reload();
@@ -125,8 +144,7 @@ try {
     await page.getByLabel('Reply trigger', { exact: true }).selectOption('prefix');
     assert.equal(await page.getByLabel('Command prefix').isEnabled(), true);
     assert.equal(await page.getByLabel('Command prefix').inputValue(), '?');
-    await page.getByRole('button', { name: 'Save changes', exact: true }).click();
-    await page.getByRole('status').filter({ hasText: 'Settings saved' }).waitFor();
+    await saveSettings(page);
     assert.equal(repo.get().bot.replyTrigger, 'prefix');
     const triggerAudit = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze();
     assert.deepEqual(triggerAudit.violations.map((v) => v.id), [], `Reply trigger accessibility at ${width}px`);

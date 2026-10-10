@@ -4,7 +4,9 @@
   "private": true,
   "description": "Self-hosted WhatsApp AI assistant with a live administration dashboard",
   "type": "module",
-  "engines": { "node": ">=20.0.0" },
+  "engines": {
+    "node": ">=22.13.0"
+  },
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
@@ -17,6 +19,8 @@
     "@whiskeysockets/baileys": "7.0.0-rc14",
     "dotenv": "18.0.6",
     "express": "5.2.1",
+    "fflate": "0.8.3",
+    "officeparser": "8.1.1",
     "openai": "6.49.0",
     "pino": "10.4.0",
     "qrcode": "1.5.4",

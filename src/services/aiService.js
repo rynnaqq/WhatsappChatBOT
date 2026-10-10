@@ -2,6 +2,7 @@ import OpenAI from 'openai';
 import { performance } from 'node:perf_hooks';
 
 import { computeBackoffDelay, isAbortError, isRetryableProviderError } from './rateLimiter.js';
+import { AttachmentUserFacingError, prepareAttachment } from './attachmentService.js';
 
 const MAX_TRANSIENT_RETRIES = 3;
 const GENERIC_ERROR = 'The AI service is temporarily unavailable. Please try again.';
@@ -48,8 +49,9 @@ export class AIService {
   #client;
   #clientSignature;
   #memoryGeneration = 0;
+  #prepareAttachment;
 
-  constructor({ settingsRepo, memory, logger, clientFactory, sleep, random } = {}) {
+  constructor({ settingsRepo, memory, logger, clientFactory, sleep, random, prepareAttachment: attachmentPreparer } = {}) {
     if (!settingsRepo || typeof settingsRepo.get !== 'function') throw new TypeError('settingsRepo is required.');
     if (!memory) throw new TypeError('memory is required.');
     this.#settingsRepo = settingsRepo;
@@ -58,17 +60,37 @@ export class AIService {
     this.#clientFactory = clientFactory ?? ((config) => new OpenAI(config));
     this.#sleep = sleep ?? abortableSleep;
     this.#random = random ?? Math.random;
+    this.#prepareAttachment = attachmentPreparer ?? prepareAttachment;
   }
 
-  async reply({ chatId, text, imageBuffer, mimeType } = {}) {
+  async reply({ chatId, text, imageBuffer, mimeType, attachment } = {}) {
     const settings = this.#settingsRepo.get();
     const memoryGeneration = this.#memoryGeneration;
     const userText = typeof text === 'string' ? text : '';
-    this.#validateImage(imageBuffer, settings.ai);
-    const currentMessage = buildCurrentMessage(userText, imageBuffer, mimeType);
     const operation = this.#beginOperation(settings.ai.timeoutSeconds);
 
     try {
+      let currentMessage;
+      let attachmentMemory;
+      if (attachment !== undefined && attachment !== null) {
+        let prepared;
+        try {
+          prepared = await this.#prepareAttachment(attachment, { ai: settings.ai, signal: operation.signal });
+        } catch (error) {
+          if (error instanceof AttachmentUserFacingError) throw new UserFacingError(error.message);
+          throw error;
+        }
+        if (operation.signal.aborted) throw abortError();
+        if (memoryGeneration !== this.#memoryGeneration) throw new UserFacingError(GENERIC_ERROR);
+        currentMessage = {
+          role: 'user',
+          content: [{ type: 'text', text: userText || 'Please help me with this attachment.' }, ...prepared.parts],
+        };
+        attachmentMemory = prepared.memoryText;
+      } else {
+        this.#validateImage(imageBuffer, settings.ai);
+        currentMessage = buildCurrentMessage(userText, imageBuffer, mimeType);
+      }
       let messages = this.#buildMessages(settings, chatId, currentMessage);
       let overflowRetried = false;
       let response;
@@ -94,7 +116,9 @@ export class AIService {
 
       const answer = extractText(response);
       if (!answer) throw new UserFacingError('The AI service returned an empty response. Please try again.');
-      const rememberedText = imageBuffer
+      const rememberedText = attachmentMemory
+        ? `${attachmentMemory}${userText ? ` ${userText}` : ''}`
+        : imageBuffer
         ? `[image sent]${userText ? ` ${userText}` : ''}`
         : userText;
       if (memoryGeneration === this.#memoryGeneration) {
@@ -102,7 +126,7 @@ export class AIService {
       }
       return answer;
     } catch (error) {
-      throw this.#toUserFacingError(error, operation.signal);
+      throw this.#toUserFacingError(error, operation.signal, Boolean(attachment));
     } finally {
       operation.finish();
     }
@@ -199,7 +223,7 @@ export class AIService {
     return { signal: controller.signal, finish: () => clearTimeout(timer) };
   }
 
-  #toUserFacingError(error, signal) {
+  #toUserFacingError(error, signal, hasAttachment = false) {
     if (error instanceof UserFacingError) return error;
     const timedOut = signal.aborted || isAbortError(error) || error?.name === 'APIConnectionTimeoutError';
     this.#logger.error?.(
@@ -210,9 +234,14 @@ export class AIService {
       },
       timedOut ? 'AI request timed out.' : 'AI request failed.',
     );
-    return new UserFacingError(timedOut
-      ? 'The AI service timed out. Please try again.'
-      : GENERIC_ERROR);
+    if (timedOut) return new UserFacingError('The AI service timed out. Please try again.');
+    if (hasAttachment && error?.status === 400 && !isContextOverflow(error)) {
+      return new UserFacingError('The provider rejected this attachment. Check that the selected model supports its file type.');
+    }
+    if (hasAttachment && error?.status === 413) {
+      return new UserFacingError('The attachment exceeds the provider\'s size limit. Try a smaller file.');
+    }
+    return new UserFacingError(GENERIC_ERROR);
   }
 }
 

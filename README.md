@@ -1,10 +1,10 @@
 # Relay · WhatsApp AI Chatbot
 
-A self-hosted WhatsApp assistant with a live web dashboard. Link one WhatsApp account, configure an OpenAI-compatible provider, and reply to inbound text and image messages.
+A self-hosted WhatsApp assistant with a live web dashboard. Link one WhatsApp account, configure an OpenAI-compatible provider, and reply to text, images, voice notes, audio, videos, stickers, and documents.
 
 ## Quick start
 
-Use Node.js 24 LTS for deployment. Node.js 20 compatibility is also checked; the application uses ES Modules.
+Use Node.js 24 LTS for deployment. Document extraction requires Node.js 22.13 or newer; Node.js 20 is no longer supported. The application uses ES Modules.
 
 ```sh
 npm install
@@ -17,9 +17,9 @@ Open **http://localhost:3000**. The setup command creates a private `secrets.env
 1. In **AI provider**, enter the provider URL, key, and model. Save changes and use **Test connection**.
 2. In WhatsApp on your phone, open **Linked devices → Link a device**, then scan the dashboard QR code.
 3. From a different WhatsApp account, send `!Hello`. With the default prefix, messages without `!` are ignored.
-4. For images, use a vision-capable model and send an image with a caption such as `!Describe this image`. To handle images without captions, leave the command prefix empty.
+4. For images and stickers, enable **Vision enabled** and use a vision-capable model. For documents, voice notes, audio, and videos, enable **Files, audio and video**. In prefix mode, include the prefix in the caption; use the private-chat trigger below to send attachments directly without captions.
 
-To answer ordinary private messages without commands while keeping groups addressed to the bot, set **Bot behavior → Reply trigger → Private chats + group tags/replies** and save. Every eligible private message is accepted, including ordinary text and captioned or captionless images when vision is enabled. In a group, tag the linked WhatsApp account and include your question, or reply to a message from that account in the same chat. Group tags of other people and replies to other people are ignored. A group image reply can be handled without a caption when vision is enabled; a bare group tag with no question is ignored. Existing settings saved as the former **Tags or replies only** mode automatically use this updated behavior.
+To answer ordinary private messages without commands while keeping groups addressed to the bot, set **Bot behavior → Reply trigger → Private chats + group tags/replies** and save. Every eligible private message is accepted, including enabled attachments with or without captions. In a group, tag the linked WhatsApp account in the caption or send the attachment as a reply to a message from that account in the same chat. Group tags of other people and replies to other people are ignored; a bare group tag with no question or attachment is ignored. Existing settings saved as the former **Tags or replies only** mode automatically use this updated behavior.
 
 The server binds to `127.0.0.1` by default. Set `HOST=0.0.0.0` to reach it from your LAN. Use HTTPS when exposing the dashboard beyond your local machine.
 
@@ -68,11 +68,34 @@ Configuration is loaded from the project-root `secrets.env` at startup, regardle
 | `SESSION_TTL_HOURS` | `12` | Dashboard-session lifetime, from 1 to 168 hours. |
 | `MAX_TOKENS_CEILING` | `32768` | Server-side upper limit for the dashboard's token setting; at least 512. |
 
-Default behavior: `!` prefix, six complete conversation turns, group replies enabled, private-only disabled, typing enabled, read receipts off. Advanced settings default to a 60-second AI request budget, 5 MB images, a 120-second freshness window, and 20 accepted messages per minute per chat.
+Default behavior: `!` prefix, six complete conversation turns, group replies enabled, private-only disabled, typing enabled, read receipts off. Advanced settings default to a 60-second AI request budget, 5 MB images/stickers, 10 MB documents/audio/video, a 120-second freshness window, and 20 accepted messages per minute per chat. Both size limits can be set from 1 to 20 MB. New media settings load with defaults without changing an existing provider key, persona, or reply trigger.
 
 The default persona uses natural WhatsApp conversation, matches the user's language and tone, and keeps casual replies short without unsolicited coding-task summaries. Customize **System prompt / Persona** in the dashboard's bot settings; saved personas stay in place when you update the application.
 
-**Private chats only takes precedence over group replies.** These restrictions apply to both reply triggers. In command-prefix mode, an empty prefix accepts every eligible inbound message. In **Private chats + group tags/replies** mode, the prefix is ignored: private chats accept every eligible inbound message, while group messages must tag the linked account or quote a message authored by it in the same chat. Phone-number and WhatsApp LID addresses are supported. Unsupported media, status updates, broadcasts, self messages, historical batches, duplicates, and old messages are ignored.
+**Private chats only takes precedence over group replies.** These restrictions apply to both reply triggers. In command-prefix mode, an empty prefix accepts every eligible inbound message. In **Private chats + group tags/replies** mode, the prefix is ignored: private chats accept every eligible inbound message, while group messages must tag the linked account or quote a message authored by it in the same chat. Phone-number and WhatsApp LID addresses are supported. Status updates, broadcasts, self messages, historical batches, duplicates, and old messages are ignored. Accepted files that cannot be read receive a clear response.
+
+## Incoming attachments
+
+Send an attachment in a private chat, optionally with a question in its caption. Without a caption, the bot describes images/videos, transcribes audio, or summarizes documents. In groups, send it with a bot mention or as a reply to the bot; ordinary group attachments do not trigger downloads or AI requests.
+
+| Attachment | Processing |
+| --- | --- |
+| Images and WhatsApp stickers | Sent to the model as an image; vision must be enabled. |
+| Voice notes and audio | Sent to an audio-capable model for transcription or answering questions. |
+| Videos | Sent to a video-capable model for description or questions about the clip. |
+| PDF | Sent directly to a model that supports PDF, including scanned pages. |
+| Word DOCX, Excel XLSX, PowerPoint PPTX; OpenDocument ODT, ODS, ODP | Text extracted locally in a bounded worker. Embedded pictures, charts, and exact formatting are not reconstructed. |
+| TXT, CSV, JSON, HTML, XML, source code | Decoded as text, never executed. Long content is truncated with a notice. |
+| ZIP | Lists the archive's entries; does not recursively read or unpack their contents. |
+| Unsupported binary, corrupted, or encrypted files | Clear error explaining that the file could not be read; no claim that its contents were understood. |
+
+Keep **Attachment format → Automatic** for `ag/gemini…` models in 9Router. It uses `audio_url` for audio and `image_url` data URIs with the actual PDF/video MIME type for those files. These paths were verified with the configured router; its standard file parts returned answers without recognizing the attached content. For another 9Router Gemini model alias, choose **9Router Gemini** explicitly. **Standard files** uses `file.file_data` parts, supported by current upstream 9Router and compatible providers.
+
+Other OpenAI-compatible providers and models may support fewer attachment types or require another API; a successful **Test connection** verifies a text request only. A rejected attachment tells you to check model support. Use a multimodal model for audio, video, and PDF.
+
+Documents are limited to 60,000 extracted characters, and Office parsing has separate limits on expanded archive size, entry count, worker memory, and time. At most two Office readers run together; a busy reader asks you to retry. No FFmpeg, Python, or OCR downloads are required on the server. Attached data is kept in memory for processing, sent to the configured provider, and discarded; conversation history retains an attachment placeholder and caption rather than the original file or its extracted contents.
+
+Primary references: [9Router Gemini attachment translation](https://github.com/decolua/9router/blob/ce4460ef79382bfddb4aa5fc0ff9f3cb0d5f95a8/open-sse/translator/formats/gemini.js), [Gemini audio](https://ai.google.dev/gemini-api/docs/generate-content/audio), [Gemini file inputs](https://ai.google.dev/gemini-api/docs/file-input-methods), [OfficeParser](https://github.com/harshankur/officeParser).
 
 ## Providers
 
@@ -103,9 +126,9 @@ Primary references: [OpenRouter](https://openrouter.ai/openai/gpt-4o-mini/provid
 - Transient disconnects reconnect with exponential backoff, capped at 60 seconds. Processing and deduplication remain scoped to the bot instance across same-account reconnects.
 - `storage/settings.json` is written atomically through a serialized queue. The provider key is encrypted with AES-256-GCM; API responses expose only a fixed mask. Invalid settings are backed up before defaults are used. Runtime files, `secrets.env`, legacy `.env`, logs, and test screenshots are Git-ignored.
 - WhatsApp authentication lives in `storage/auth_info`. Back up this directory and `secrets.env` privately. Directory/file permissions are restricted on platforms supporting POSIX modes; use equivalent private ACLs on Windows.
-- Conversation memory stays in RAM and holds only text. Image history stores `[image sent]` plus its caption. Memory clears on process restart or account logout; abandoned old-account work cannot restore it.
+- Conversation memory stays in RAM and holds only text. Attachment history stores a metadata placeholder plus its caption, never file bytes or extracted document contents. Memory clears on process restart or account logout; abandoned old-account work cannot restore it.
 - Application logs contain events and message IDs, with no message bodies or provider credentials. Baileys' internal logger is silent. Incoming content and current conversation history are sent to the configured AI provider.
-- Image downloads accept only HTTPS media hosts under `whatsapp.net`, including redirects and reupload results. Downloads are bounded by byte count and deadline; their private network dispatcher is destroyed when finished or timed out.
+- Media downloads accept only HTTPS hosts under `whatsapp.net`; redirects are rejected and reupload results are validated. Downloads are bounded by declared and actual byte count and deadline; their private network dispatcher is destroyed when finished or timed out.
 
 Keep `SESSION_SECRET` stable across reboots. Changing it invalidates sessions and prevents decryption of a previously saved API key; the old encrypted file is backed up and the provider key must be entered again.
 
@@ -126,7 +149,7 @@ All `/api/*` endpoints except the password login require a valid signed session 
 | POST | `/api/bot/restart` | `{ "mode": "restart" }` or `{ "mode": "logout" }`; returns `202`. |
 | POST | `/api/ai/test` | Test the saved provider without adding conversation memory. |
 
-Settings validation returns `400` with a flat `fields` map. Sending `"********"` for an unchanged saved key preserves it. Schema additions to the PRD: `ai.maxImageMB`, `bot.maxMessageAgeSeconds`, `bot.markRead`, and `bot.rateLimitPerMinute`.
+Settings validation returns `400` with a flat `fields` map. Sending `"********"` for an unchanged saved key preserves it. Schema additions to the PRD: `ai.maxImageMB`, `ai.mediaEnabled`, `ai.maxFileMB`, `ai.attachmentTransport`, `bot.replyTrigger`, `bot.maxMessageAgeSeconds`, `bot.markRead`, and `bot.rateLimitPerMinute`.
 
 Connect to authenticated **`/ws`** with a same-origin `Origin` header. Events are `{ "type": "status" | "qr", "payload": {...} }`. New clients receive the current snapshot and QR; subsequent changes are pushed without polling. WebSocket ping/pong runs every 30 seconds.
 
@@ -144,6 +167,6 @@ Unit/integration tests use temporary private storage, real local HTTP provider e
 
 ## Dependency upgrades
 
-Baileys is pinned to `7.0.0-rc14`, the supported 7.x security line; a stable 7.0 release was not available at implementation time. OpenAI SDK `6.49.0` preserves the PRD's Node 20 compatibility; deploy on a supported Node LTS release. References: [Baileys security policy](https://github.com/WhiskeySockets/Baileys/blob/master/SECURITY.md), [Baileys releases](https://github.com/WhiskeySockets/Baileys/releases), [OpenAI SDK v6.49.0](https://github.com/openai/openai-node/blob/v6.49.0/README.md).
+Baileys is pinned to `7.0.0-rc14`, the supported 7.x security line; a stable 7.0 release was not available at implementation time. The OpenAI SDK is pinned to `6.49.0` and OfficeParser to `8.1.1`. OfficeParser requires Node.js 22.13 or newer; deploy on Node.js 24 LTS. References: [Baileys security policy](https://github.com/WhiskeySockets/Baileys/blob/master/SECURITY.md), [Baileys releases](https://github.com/WhiskeySockets/Baileys/releases), [OpenAI SDK v6.49.0](https://github.com/openai/openai-node/blob/v6.49.0/README.md), [OfficeParser package requirements](https://github.com/harshankur/officeParser/blob/master/package.json).
 
 Before upgrading: run the suite and browser checks, inspect dependency advisories, verify media download and Baileys exports, then test QR pairing, credential reload, transient reconnect, restart, logout, text, and vision on a dedicated account. The v2 roadmap in the PRD remains outside this release.

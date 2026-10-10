@@ -1,4 +1,31 @@
-# v1 Verification
+# Verification
+
+## Incoming attachments — 2026-10-10
+
+The current application supports private-chat attachments without a prefix in the private-chat/group-addressed trigger mode. Group attachments require a mention of the linked bot or a reply to its message in the same chat. Existing explicit prefix-mode settings retain their behavior.
+
+| Check | Result |
+| --- | --- |
+| `npm test` on Node 24.20.0 | 184 passed; zero failures, cancellations, or skips. |
+| `npm run check` | All 35 JavaScript files passed. |
+| `npm run test:ui` | Login and dashboard passed at 1440px and 360px, including attachment controls, save/reload persistence, and disabled-control behavior. |
+| Browser accessibility | Zero detected axe WCAG AA violations, browser errors, or horizontal overflow. |
+| `npm audit --omit=dev` | Zero reported production dependency vulnerabilities. |
+| Attachment preparation | Image/sticker, audio/voice, video, PDF, text, six Office formats, and ZIP inventory passed controlled tests. Unsupported, corrupt, oversized, encrypted, and conflicting-signature inputs receive safe errors. |
+| Integrated incoming messages | The real bounded downloader, attachment preparation, Office worker, and official OpenAI client were exercised together against a controlled HTTP provider. Private captionless media, addressed group media, and unsupported-file replies passed. Ordinary group media does not download or contact the provider. |
+| Live configured 9Router model | Synthetic PNG, PDF, OGG, WAV, MP4, TXT, and DOCX content was recognized through the production AI service and automatic transport with `ag/gemini-3.8-flash-high`. The saved provider settings remained byte-for-byte unchanged. |
+| Existing settings | Missing media fields gain defaults without rewriting the old settings file, replacing credentials, or changing the reply trigger. Masked-key saves preserve the encrypted provider key. |
+| Focused integration review | Cleared after fixes for generic OGG MIME and document MIME/signature conflicts. Actual OGG bytes map to audio/video OGG; ZIP-backed Office declarations remain valid. |
+| Complete Git ZIP | Source modules, worker, manifests, and dashboard assets are included; runtime secrets, storage, and dependencies are excluded. The ZIP overlays an existing synthetic installation without changing protected files. |
+| Clean production package | Installed with `npm ci --omit=dev --ignore-scripts`; packaged attachment and incoming-message tests passed. The exported CLI served health, login, and authenticated settings on the exported allocation, loaded legacy encrypted settings with new defaults, and preserved both environment files, settings, and the existing auth marker byte-for-byte. Only the isolated fixture process was started and stopped. |
+
+Audio, video, and PDF require a capable model. The verified 9Router Gemini path uses `audio_url` for audio and `image_url` data URIs with the actual PDF/video MIME; a standard file part returned a successful completion without recognizing the synthetic content on the configured router. Automatic selection is limited to `ag/gemini` model IDs, with explicit transport choices for other aliases and providers.
+
+Office extraction reads text, without reconstructing embedded images or layout. ZIP support lists filenames rather than recursively extracting contents. Workers have memory, archive-expansion, time, and concurrency limits; at most two Office readers run together. Files and extracted contents are excluded from conversation history. Node.js 22.13 or newer is required by OfficeParser; Node.js 24 is recommended. The older Node 20 results below apply only to the earlier application.
+
+Live provider checks used synthetic fixtures and the authorized saved key privately. Full media delivery from the operator's phone, live reconnect of that paired account, and deployment to the remote Pterodactyl container were not performed by these checks. The tests establish incoming-message behavior and live model recognition separately.
+
+## Historical v1 checks — 2026-10-08/09
 
 Startup and environment checks updated on 2026-10-09 in the supplied Windows workspace. Browser and accessibility results below were verified on 2026-10-08; the environment fix does not change the dashboard.
 
@@ -56,4 +83,4 @@ The PRD's v2 roadmap is excluded from v1. Its conflicting remote-logout/storage 
 
 ## Implementation boundaries
 
-The dashboard has no frontend build step. Bot settings and credentials persist on disk; conversation memory and dashboard sessions are process-local. Access beyond the machine requires an intentional HOST setting and HTTPS deployment. WhatsApp media is restricted to subdomains of `whatsapp.net`; a future upstream media-host change requires an explicit policy update. No live provider request was made using operator credentials.
+The dashboard has no frontend build step. Bot settings and credentials persist on disk; conversation memory and dashboard sessions are process-local. Access beyond the machine requires an intentional HOST setting and HTTPS deployment. WhatsApp media is restricted to subdomains of `whatsapp.net`; a future upstream media-host change requires an explicit policy update. No live provider request was made using operator credentials during the initial v1 checks; the newer attachment verification above includes authorized synthetic live-provider requests.

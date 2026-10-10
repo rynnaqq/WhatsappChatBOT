@@ -240,3 +240,59 @@ test('subscribers receive cloned public settings after successful saves only', a
   assert.equal(received[0].ai.apiKey, MASKED_API_KEY);
   assert.equal(repo.get().ai.model, 'second');
 });
+
+test('older encrypted settings gain media defaults without resetting credentials or rewriting the file', async (t) => {
+  const { repo, storageDir } = await makeRepo(t);
+  await repo.save(validSettings({ bot: { replyTrigger: 'mention-or-reply' } }));
+  const file = path.join(storageDir, 'settings.json');
+  const older = JSON.parse(await readFile(file, 'utf8'));
+  delete older.ai.mediaEnabled;
+  delete older.ai.maxFileMB;
+  delete older.ai.attachmentTransport;
+  const original = JSON.stringify(older);
+  await import('node:fs/promises').then(({ writeFile }) => writeFile(file, original));
+  const warnings = [];
+  const restored = new SettingsRepo({ storageDir, encryptionSecret: secret, logger: { warn: (...args) => warnings.push(args) } });
+
+  await restored.init();
+
+  assert.equal(restored.get().ai.mediaEnabled, true);
+  assert.equal(restored.get().ai.maxFileMB, 10);
+  assert.equal(restored.get().ai.attachmentTransport, 'auto');
+  assert.equal(restored.get().ai.apiKey, 'sk-test-secret');
+  assert.equal(restored.get().bot.replyTrigger, 'mention-or-reply');
+  assert.equal(await readFile(file, 'utf8'), original);
+  assert.deepEqual(warnings, []);
+});
+
+test('media controls persist and preserve the masked API key', async (t) => {
+  const { repo, storageDir } = await makeRepo(t);
+  await repo.save(validSettings());
+  const payload = repo.getPublic();
+  payload.ai.mediaEnabled = false;
+  payload.ai.maxFileMB = 12;
+  payload.ai.attachmentTransport = '9router-gemini';
+  await repo.save(payload);
+  const restored = new SettingsRepo({ storageDir, encryptionSecret: secret });
+  await restored.init();
+
+  assert.equal(restored.get().ai.mediaEnabled, false);
+  assert.equal(restored.get().ai.maxFileMB, 12);
+  assert.equal(restored.get().ai.attachmentTransport, '9router-gemini');
+  assert.equal(restored.get().ai.apiKey, 'sk-test-secret');
+  assert.equal(restored.getPublic().ai.apiKey, MASKED_API_KEY);
+});
+
+test('invalid media controls are rejected without changing active settings', async (t) => {
+  const { repo } = await makeRepo(t);
+  await repo.save(validSettings());
+  for (const ai of [{ mediaEnabled: 'true' }, { maxFileMB: 0 }, { maxFileMB: 21 }, { maxFileMB: 1.5 }, { attachmentTransport: 'anything' }]) {
+    await assert.rejects(repo.save(validSettings({ ai })), (error) => {
+      assert.ok(error instanceof SettingsValidationError);
+      assert.ok(error.fields[`ai.${Object.keys(ai)[0]}`]);
+      return true;
+    });
+    assert.equal(repo.get().ai.mediaEnabled, true);
+    assert.equal(repo.get().ai.maxFileMB, 10);
+  }
+});

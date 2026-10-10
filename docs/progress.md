@@ -1,5 +1,17 @@
 # Implementation progress
 
+## Incoming attachments — 2026-10-10
+
+- Added images/stickers, documents, voice notes/audio, and video/PTV to the incoming-message pipeline. Private chats accept enabled attachments without captions in the private-chat/group-addressed mode; groups still require a bot tag or reply. Legacy prefix mode remains available.
+- Added bounded text and six-format Office extraction, ZIP filename inventory, native multimodal transport, and clear errors for unsupported, corrupt, encrypted, or oversized files. Office parsing uses at most two isolated workers and does not download OCR components.
+- Added dashboard media controls, limits, and transport selection. Existing encrypted settings load the new defaults without rewriting the saved file or changing credentials. `secrets.env` and Pterodactyl's allocated-port behavior are preserved.
+- Verified recognition of synthetic PNG, PDF, OGG, WAV, MP4, TXT, and DOCX through the configured 9Router Gemini model. Automatic transport uses the verified audio/PDF/video paths; other provider transports remain configurable.
+- Verification: 184/184 tests and 35 syntax checks passed on Node 24.20.0. Dashboard checks passed at 1440px/360px with zero detected axe WCAG AA violations or browser errors; production dependency audit reported zero advisories. Independent integration review cleared the OGG and MIME/signature fixes.
+- Packaging: a complete source-only Git ZIP passed a fresh production installation, packaged attachment tests, and actual CLI startup with the exported allocated port. Overlay and startup preserved synthetic existing environment files, encrypted settings, and pairing data; the operator's running bot was not restarted.
+- Runtime requirement is now Node.js 22.13 or newer; Node.js 24 is recommended. The Node 20 results in the historical record below do not apply to this update.
+
+## Historical implementation record
+
 Plan: docs/superpowers/plans/2026-10-08-whatsapp-ai-chatbot.md
 
 - At project start, the workspace contained only the supplied PRD and no Git repository.

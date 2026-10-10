@@ -537,3 +537,129 @@ test('testConnection distinguishes network failure from timeout', async (t) => {
     });
   });
 });
+
+test('attachments reach the official client as native file parts without storing binary content in history', async (t) => {
+  const provider = await startProvider(t, ({ response }) => sendJson(response, 200, completion('heard')));
+  const memory = new MemoryService();
+  const service = new AIService({ settingsRepo: fakeRepo(settings({ ai: { baseURL: provider.baseURL } })), memory });
+  const buffer = Buffer.from('OggS synthetic voice payload');
+
+  await service.reply({ chatId: 'chat', text: 'Transcribe this.', attachment: { kind: 'audio', mimeType: 'audio/ogg', fileName: 'voice.ogg', buffer } });
+
+  const current = provider.requests[0].body.messages.at(-1);
+  assert.equal(current.content[0].text, 'Transcribe this.');
+  assert.equal(current.content[1].type, 'file');
+  assert.equal(current.content[1].file.file_data, `data:audio/ogg;base64,${buffer.toString('base64')}`);
+  const history = JSON.stringify(memory.get('chat', 3));
+  assert.match(history, /audio sent/);
+  assert.match(history, /Transcribe this/);
+  assert.equal(history.includes(buffer.toString('base64')), false);
+  assert.equal(history.includes('synthetic voice payload'), false);
+});
+
+test('text documents are attached as bounded text while history retains metadata only', async (t) => {
+  const provider = await startProvider(t, ({ response }) => sendJson(response, 200, completion('summarized')));
+  const memory = new MemoryService();
+  const service = new AIService({ settingsRepo: fakeRepo(settings({ ai: { baseURL: provider.baseURL } })), memory });
+
+  await service.reply({ chatId: 'chat', text: 'Summarize.', attachment: { kind: 'document', mimeType: 'text/plain', fileName: 'notes.txt', buffer: Buffer.from('fixture document body') } });
+
+  assert.match(JSON.stringify(provider.requests[0].body.messages.at(-1).content), /fixture document body/);
+  const history = JSON.stringify(memory.get('chat', 3));
+  assert.match(history, /document sent/);
+  assert.equal(history.includes('fixture document body'), false);
+});
+
+test('disabled or oversized attachments never contact the provider or populate memory', async (t) => {
+  const provider = await startProvider(t, ({ response }) => sendJson(response, 200, completion()));
+  const repo = fakeRepo(settings({ ai: { baseURL: provider.baseURL, mediaEnabled: false, maxFileMB: 1 } }));
+  const memory = new MemoryService();
+  const service = new AIService({ settingsRepo: repo, memory });
+  const document = { kind: 'document', mimeType: 'text/plain', fileName: 'notes.txt', buffer: Buffer.from('hello') };
+  await assert.rejects(service.reply({ chatId: 'chat', text: 'Read.', attachment: document }), (error) => error instanceof UserFacingError && /disabled/i.test(error.message));
+  repo.set(settings({ ai: { baseURL: provider.baseURL, mediaEnabled: true, maxFileMB: 1 } }));
+  await assert.rejects(service.reply({ chatId: 'chat', attachment: { ...document, buffer: Buffer.alloc(1024 * 1024 + 1) } }), (error) => error instanceof UserFacingError && /1 MB/i.test(error.message));
+  assert.equal(provider.requests.length, 0);
+  assert.deepEqual(memory.get('chat', 3), []);
+});
+
+test('context overflow retry keeps the same attachment and trims only complete memory turns', async (t) => {
+  const provider = await startProvider(t, ({ response, attempt }) => attempt === 1
+    ? sendJson(response, 400, { error: { code: 'context_length_exceeded', message: 'context length exceeded' } })
+    : sendJson(response, 200, completion('read')));
+  const memory = new MemoryService();
+  memory.append('chat', 'old question', 'old answer', 3);
+  const service = new AIService({ settingsRepo: fakeRepo(settings({ ai: { baseURL: provider.baseURL } })), memory });
+  await service.reply({ chatId: 'chat', text: 'Read.', attachment: { kind: 'document', mimeType: 'application/pdf', fileName: 'paper.pdf', buffer: Buffer.from('%PDF-1.4\nfixture') } });
+  assert.equal(provider.requests.length, 2);
+  assert.deepEqual(provider.requests[1].body.messages.at(-1), provider.requests[0].body.messages.at(-1));
+  assert.equal(provider.requests[1].body.messages.length, 2);
+  assert.equal(provider.requests[1].body.messages.at(-1).content[1].type, 'file');
+});
+
+test('account reset during attachment parsing cancels the old request before provider dispatch', { timeout: 1000 }, async () => {
+  let release;
+  let started;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const ready = new Promise((resolve) => { started = resolve; });
+  let requests = 0;
+  const memory = new MemoryService();
+  const service = new AIService({
+    settingsRepo: fakeRepo(settings()), memory,
+    prepareAttachment: async () => { started(); await gate; return { parts: [{ type: 'text', text: 'parsed' }], memoryText: '[document sent]' }; },
+    clientFactory: () => ({ chat: { completions: { create: async () => { requests++; return completion(); } } } }),
+  });
+  const reply = service.reply({ chatId: 'chat', text: 'Read.', attachment: { kind: 'document', buffer: Buffer.from('fixture') } });
+  await ready;
+  service.resetMemory();
+  release();
+  await assert.rejects(reply, UserFacingError);
+  assert.equal(requests, 0);
+  assert.deepEqual(memory.get('chat', 3), []);
+});
+
+test('attachment preparation shares the total AI deadline and cannot dispatch after timeout', async () => {
+  let requests = 0;
+  const memory = new MemoryService();
+  const service = new AIService({
+    settingsRepo: fakeRepo(settings({ ai: { timeoutSeconds: 0.02 } })), memory,
+    prepareAttachment: async (_attachment, { signal }) => {
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      assert.equal(signal.aborted, true);
+      return { parts: [{ type: 'text', text: 'parsed' }], memoryText: '[document sent]' };
+    },
+    clientFactory: () => ({ chat: { completions: { create: async () => { requests++; return completion(); } } } }),
+  });
+  await assert.rejects(service.reply({ chatId: 'chat', attachment: { kind: 'document', buffer: Buffer.from('fixture') } }), (error) => error instanceof UserFacingError && /timed out/i.test(error.message));
+  assert.equal(requests, 0);
+  assert.deepEqual(memory.get('chat', 3), []);
+});
+
+test('a model rejection of a file has a helpful safe error without raw provider content', async (t) => {
+  const logs = [];
+  const provider = await startProvider(t, ({ response }) => sendJson(response, 400, { error: { message: 'private provider-secret attachment detail', code: 'unsupported_file' } }));
+  const service = new AIService({ settingsRepo: fakeRepo(settings({ ai: { baseURL: provider.baseURL } })), memory: new MemoryService(), logger: { error: (...args) => logs.push(args) } });
+  await assert.rejects(service.reply({ chatId: 'chat', text: 'Read.', attachment: { kind: 'document', mimeType: 'application/pdf', fileName: 'paper.pdf', buffer: Buffer.from('%PDF-1.4\nfixture') } }), (error) => {
+    assert.ok(error instanceof UserFacingError);
+    assert.match(error.message, /model|file type|attachment/i);
+    assert.equal(error.message.includes('provider-secret'), false);
+    return true;
+  });
+  assert.equal(JSON.stringify(logs).includes('provider-secret'), false);
+});
+
+test('9Router Gemini automatically receives compatible audio, PDF and video parts through the official client', async (t) => {
+  const provider = await startProvider(t, ({ response }) => sendJson(response, 200, completion('read')));
+  const service = new AIService({ settingsRepo: fakeRepo(settings({ ai: { baseURL: provider.baseURL, model: 'ag/gemini-3.8-flash-high' } })), memory: new MemoryService() });
+  const attachments = [
+    { kind: 'audio', mimeType: 'audio/ogg', fileName: 'voice.ogg', buffer: Buffer.from('OggS fixture'), partType: 'audio_url' },
+    { kind: 'document', mimeType: 'application/pdf', fileName: 'paper.pdf', buffer: Buffer.from('%PDF-1.4\nfixture'), partType: 'image_url' },
+    { kind: 'video', mimeType: 'video/mp4', fileName: 'clip.mp4', buffer: Buffer.from('synthetic mp4 fixture'), partType: 'image_url' },
+  ];
+  for (const attachment of attachments) {
+    await service.reply({ chatId: 'chat', text: 'Read.', attachment });
+    const part = provider.requests.at(-1).body.messages.at(-1).content[1];
+    assert.equal(part.type, attachment.partType);
+    assert.equal(part[attachment.partType].url, `data:${attachment.mimeType};base64,${attachment.buffer.toString('base64')}`);
+  }
+});

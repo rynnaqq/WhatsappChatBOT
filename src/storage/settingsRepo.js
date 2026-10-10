@@ -14,8 +14,11 @@ export const DEFAULT_SETTINGS = Object.freeze({
     temperature: 0.7,
     maxTokens: 512,
     visionEnabled: true,
+    mediaEnabled: true,
+    attachmentTransport: 'auto',
     timeoutSeconds: 60,
     maxImageMB: 5,
+    maxFileMB: 10,
   }),
   bot: Object.freeze({
     systemPrompt: [
@@ -40,7 +43,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
 const ROOT_KEYS = new Set(['ai', 'bot', 'version']);
 const AI_KEYS = new Set([
   'baseURL', 'apiKey', 'model', 'temperature', 'maxTokens', 'visionEnabled',
-  'timeoutSeconds', 'maxImageMB',
+  'mediaEnabled', 'attachmentTransport', 'timeoutSeconds', 'maxImageMB', 'maxFileMB',
 ]);
 const BOT_KEYS = new Set([
   'systemPrompt', 'replyTrigger', 'commandPrefix', 'memoryLimit', 'privateChatsOnly',
@@ -223,8 +226,11 @@ function validateAndNormalize(input, { maxTokensCeiling, allowEmptyApiKey, addit
       temperature: ai.temperature,
       maxTokens: ai.maxTokens,
       visionEnabled: ai.visionEnabled,
+      mediaEnabled: additionsOptional && ai.mediaEnabled === undefined ? DEFAULT_SETTINGS.ai.mediaEnabled : ai.mediaEnabled,
+      attachmentTransport: additionsOptional && ai.attachmentTransport === undefined ? DEFAULT_SETTINGS.ai.attachmentTransport : ai.attachmentTransport,
       timeoutSeconds: ai.timeoutSeconds,
       maxImageMB: additionsOptional && ai.maxImageMB === undefined ? DEFAULT_SETTINGS.ai.maxImageMB : ai.maxImageMB,
+      maxFileMB: additionsOptional && ai.maxFileMB === undefined ? DEFAULT_SETTINGS.ai.maxFileMB : ai.maxFileMB,
     },
     bot: {
       systemPrompt: bot.systemPrompt,
@@ -254,8 +260,13 @@ function validateAndNormalize(input, { maxTokensCeiling, allowEmptyApiKey, addit
   numberInRange(fields, 'ai.temperature', ai.temperature, 0, 2, false);
   numberInRange(fields, 'ai.maxTokens', ai.maxTokens, 1, maxTokensCeiling, true);
   booleanField(fields, 'ai.visionEnabled', ai.visionEnabled);
+  booleanField(fields, 'ai.mediaEnabled', normalized.ai.mediaEnabled);
+  if (!['auto', 'file', '9router-gemini'].includes(normalized.ai.attachmentTransport)) {
+    fields['ai.attachmentTransport'] = 'Choose automatic, standard files, or 9Router Gemini.';
+  }
   numberInRange(fields, 'ai.timeoutSeconds', ai.timeoutSeconds, 5, 300, true);
   numberInRange(fields, 'ai.maxImageMB', normalized.ai.maxImageMB, 1, 20, true);
+  numberInRange(fields, 'ai.maxFileMB', normalized.ai.maxFileMB, 1, 20, true);
 
   if (typeof bot.systemPrompt !== 'string') fields['bot.systemPrompt'] = 'Required.';
   else if (bot.systemPrompt.length > 4000) fields['bot.systemPrompt'] = 'Must be at most 4000 characters.';
