@@ -589,7 +589,7 @@ test('context overflow retry keeps the same attachment and trims only complete m
     : sendJson(response, 200, completion('read')));
   const memory = new MemoryService();
   memory.append('chat', 'old question', 'old answer', 3);
-  const service = new AIService({ settingsRepo: fakeRepo(settings({ ai: { baseURL: provider.baseURL } })), memory });
+  const service = new AIService({ settingsRepo: fakeRepo(settings({ ai: { baseURL: provider.baseURL, attachmentTransport: 'file' } })), memory });
   await service.reply({ chatId: 'chat', text: 'Read.', attachment: { kind: 'document', mimeType: 'application/pdf', fileName: 'paper.pdf', buffer: Buffer.from('%PDF-1.4\nfixture') } });
   assert.equal(provider.requests.length, 2);
   assert.deepEqual(provider.requests[1].body.messages.at(-1), provider.requests[0].body.messages.at(-1));
@@ -638,7 +638,7 @@ test('attachment preparation shares the total AI deadline and cannot dispatch af
 test('a model rejection of a file has a helpful safe error without raw provider content', async (t) => {
   const logs = [];
   const provider = await startProvider(t, ({ response }) => sendJson(response, 400, { error: { message: 'private provider-secret attachment detail', code: 'unsupported_file' } }));
-  const service = new AIService({ settingsRepo: fakeRepo(settings({ ai: { baseURL: provider.baseURL } })), memory: new MemoryService(), logger: { error: (...args) => logs.push(args) } });
+  const service = new AIService({ settingsRepo: fakeRepo(settings({ ai: { baseURL: provider.baseURL, attachmentTransport: 'file' } })), memory: new MemoryService(), logger: { error: (...args) => logs.push(args) } });
   await assert.rejects(service.reply({ chatId: 'chat', text: 'Read.', attachment: { kind: 'document', mimeType: 'application/pdf', fileName: 'paper.pdf', buffer: Buffer.from('%PDF-1.4\nfixture') } }), (error) => {
     assert.ok(error instanceof UserFacingError);
     assert.match(error.message, /model|file type|attachment/i);
@@ -648,18 +648,117 @@ test('a model rejection of a file has a helpful safe error without raw provider 
   assert.equal(JSON.stringify(logs).includes('provider-secret'), false);
 });
 
-test('9Router Gemini automatically receives compatible audio, PDF and video parts through the official client', async (t) => {
+test('9Router Gemini receives compatible native audio, PDF and video parts through the official client', async (t) => {
   const provider = await startProvider(t, ({ response }) => sendJson(response, 200, completion('read')));
-  const service = new AIService({ settingsRepo: fakeRepo(settings({ ai: { baseURL: provider.baseURL, model: 'ag/gemini-3.8-flash-high' } })), memory: new MemoryService() });
   const attachments = [
     { kind: 'audio', mimeType: 'audio/ogg', fileName: 'voice.ogg', buffer: Buffer.from('OggS fixture'), partType: 'audio_url' },
     { kind: 'document', mimeType: 'application/pdf', fileName: 'paper.pdf', buffer: Buffer.from('%PDF-1.4\nfixture'), partType: 'image_url' },
     { kind: 'video', mimeType: 'video/mp4', fileName: 'clip.mp4', buffer: Buffer.from('synthetic mp4 fixture'), partType: 'image_url' },
   ];
   for (const attachment of attachments) {
+    const service = new AIService({ settingsRepo: fakeRepo(settings({ ai: { baseURL: provider.baseURL, model: 'ag/gemini-3.8-flash-high', attachmentTransport: attachment.mimeType === 'application/pdf' ? '9router-gemini' : 'auto' } })), memory: new MemoryService() });
     await service.reply({ chatId: 'chat', text: 'Read.', attachment });
     const part = provider.requests.at(-1).body.messages.at(-1).content[1];
     assert.equal(part.type, attachment.partType);
     assert.equal(part[attachment.partType].url, `data:${attachment.mimeType};base64,${attachment.buffer.toString('base64')}`);
+  }
+});
+
+test('a text-only follow-up receives the uploaded document contents in the current request', async (t) => {
+  const provider = await startProvider(t, ({ response }) => sendJson(response, 200, completion('Ready.')));
+  const memory = new MemoryService();
+  const service = new AIService({ settingsRepo: fakeRepo(settings({ ai: { baseURL: provider.baseURL } })), memory });
+  await service.reply({ chatId: 'chat', text: 'Read this document.', attachment: { kind: 'document', mimeType: 'text/plain', fileName: 'invoice.txt', buffer: Buffer.from('Invoice code: ORCHID-782. Total: 480000.') } });
+  await service.reply({ chatId: 'chat', text: 'What is the invoice code?' });
+  assert.match(JSON.stringify(provider.requests[1].body.messages.at(-1).content), /ORCHID-782/);
+  assert.match(JSON.stringify(provider.requests[1].body.messages.at(-1).content), /What is the invoice code/);
+  assert.equal(JSON.stringify(memory.get('chat', 3)).includes('ORCHID-782'), false);
+});
+
+test('a follow-up resends native PDF contents without writing them into conversation history', async (t) => {
+  const provider = await startProvider(t, ({ response }) => sendJson(response, 200, completion('Ready.')));
+  const memory = new MemoryService();
+  const service = new AIService({ settingsRepo: fakeRepo(settings({ ai: { baseURL: provider.baseURL, model: 'ag/gemini-3.8-flash-high', attachmentTransport: '9router-gemini' } })), memory });
+  await service.reply({ chatId: 'chat', text: 'Read this.', attachment: { kind: 'document', mimeType: 'application/pdf', fileName: 'invoice.pdf', buffer: Buffer.from('%PDF-1.4\nsynthetic') } });
+  await service.reply({ chatId: 'chat', text: 'Explain page one.' });
+  const current = provider.requests[1].body.messages.at(-1);
+  assert.ok(Array.isArray(current.content));
+  assert.equal(current.content.at(-1).image_url.url, 'data:application/pdf;base64,JVBERi0xLjQKc3ludGhldGlj');
+  assert.equal(JSON.stringify(memory.get('chat', 3)).includes('base64'), false);
+});
+
+test('uploaded-file follow-ups stay isolated by chat and are removed on account reset', async (t) => {
+  const provider = await startProvider(t, ({ response }) => sendJson(response, 200, completion('Ready.')));
+  const service = new AIService({ settingsRepo: fakeRepo(settings({ ai: { baseURL: provider.baseURL } })), memory: new MemoryService() });
+  for (const [chatId, content] of [['chat-a', 'PRIVATE-ORCHID-A'], ['chat-b', 'PRIVATE-LILY-B']]) {
+    await service.reply({ chatId, attachment: { kind: 'document', mimeType: 'text/plain', fileName: 'notes.txt', buffer: Buffer.from(content) } });
+  }
+  await service.reply({ chatId: 'chat-a', text: 'What is the code?' });
+  const a = JSON.stringify(provider.requests.at(-1).body.messages.at(-1));
+  assert.match(a, /PRIVATE-ORCHID-A/);
+  assert.equal(a.includes('PRIVATE-LILY-B'), false);
+  await service.reply({ chatId: 'chat-b', text: 'What is the code?' });
+  const b = JSON.stringify(provider.requests.at(-1).body.messages.at(-1));
+  assert.match(b, /PRIVATE-LILY-B/);
+  assert.equal(b.includes('PRIVATE-ORCHID-A'), false);
+  service.resetMemory();
+  await service.reply({ chatId: 'chat-a', text: 'What is the code?' });
+  assert.equal(JSON.stringify(provider.requests.at(-1).body).includes('PRIVATE-ORCHID-A'), false);
+});
+
+test('file context disappears when its upload leaves the configured conversation window', async (t) => {
+  const provider = await startProvider(t, ({ response }) => sendJson(response, 200, completion('Ready.')));
+  const service = new AIService({ settingsRepo: fakeRepo(settings({ ai: { baseURL: provider.baseURL }, bot: { memoryLimit: 1 } })), memory: new MemoryService() });
+  await service.reply({ chatId: 'chat', attachment: { kind: 'document', mimeType: 'text/plain', fileName: 'notes.txt', buffer: Buffer.from('WINDOW-ONLY-SECRET') } });
+  await service.reply({ chatId: 'chat', text: 'First follow-up.' });
+  assert.match(JSON.stringify(provider.requests.at(-1).body.messages.at(-1)), /WINDOW-ONLY-SECRET/);
+  await service.reply({ chatId: 'chat', text: 'Second follow-up.' });
+  assert.equal(JSON.stringify(provider.requests.at(-1).body).includes('WINDOW-ONLY-SECRET'), false);
+});
+
+test('file context is discarded when media is disabled or the saved model changes', async (t) => {
+  const provider = await startProvider(t, ({ response }) => sendJson(response, 200, completion('Ready.')));
+  const repo = fakeRepo(settings({ ai: { baseURL: provider.baseURL } }));
+  const service = new AIService({ settingsRepo: repo, memory: new MemoryService() });
+  await service.reply({ chatId: 'chat', attachment: { kind: 'document', mimeType: 'text/plain', fileName: 'notes.txt', buffer: Buffer.from('CONTROLLED-FILE-BODY') } });
+  await service.reply({ chatId: 'chat', text: 'Read the code.' });
+  assert.match(JSON.stringify(provider.requests.at(-1).body.messages.at(-1)), /CONTROLLED-FILE-BODY/);
+  repo.set(settings({ ai: { baseURL: provider.baseURL, mediaEnabled: false } }));
+  await service.reply({ chatId: 'chat', text: 'Read the code.' });
+  assert.equal(JSON.stringify(provider.requests.at(-1).body).includes('CONTROLLED-FILE-BODY'), false);
+  repo.set(settings({ ai: { baseURL: provider.baseURL } }));
+  await service.reply({ chatId: 'chat', attachment: { kind: 'document', mimeType: 'text/plain', fileName: 'notes.txt', buffer: Buffer.from('MODEL-BOUND-FILE') } });
+  repo.set(settings({ ai: { baseURL: provider.baseURL, model: 'another-model' } }));
+  await service.reply({ chatId: 'chat', text: 'Read the code.' });
+  assert.equal(JSON.stringify(provider.requests.at(-1).body).includes('MODEL-BOUND-FILE'), false);
+});
+
+test('context overflow retry retains the cached file with the follow-up question', async (t) => {
+  const provider = await startProvider(t, ({ response, attempt }) => attempt === 2
+    ? sendJson(response, 400, { error: { code: 'context_length_exceeded', message: 'Context length exceeded' } })
+    : sendJson(response, 200, completion('Ready.')));
+  const service = new AIService({ settingsRepo: fakeRepo(settings({ ai: { baseURL: provider.baseURL } })), memory: new MemoryService() });
+  await service.reply({ chatId: 'chat', attachment: { kind: 'document', mimeType: 'text/plain', fileName: 'notes.txt', buffer: Buffer.from('RETRY-READABLE-CONTENT') } });
+  await service.reply({ chatId: 'chat', text: 'Read the code.' });
+  assert.equal(provider.requests.length, 3);
+  assert.match(JSON.stringify(provider.requests[2].body.messages.at(-1)), /RETRY-READABLE-CONTENT/);
+  assert.equal(provider.requests[2].body.messages.length, 2);
+});
+
+test('a failed newer upload removes the previous file from subsequent questions', async (t) => {
+  for (const failure of ['provider rejection', 'invalid attachment']) {
+    await t.test(failure, async (subtest) => {
+      const provider = await startProvider(subtest, ({ response, attempt }) => attempt === 2 && failure === 'provider rejection'
+        ? sendJson(response, 400, { error: { code: 'unsupported_file', message: 'Rejected synthetic upload' } })
+        : sendJson(response, 200, completion('Ready.')));
+      const service = new AIService({ settingsRepo: fakeRepo(settings({ ai: { baseURL: provider.baseURL, attachmentTransport: 'file' } })), memory: new MemoryService() });
+      await service.reply({ chatId: 'chat', attachment: { kind: 'document', mimeType: 'text/plain', fileName: 'original.txt', buffer: Buffer.from('PREVIOUS-FILE-PRIVATE-CONTENT') } });
+      const newer = failure === 'provider rejection'
+        ? { kind: 'document', mimeType: 'application/pdf', fileName: 'new.pdf', buffer: Buffer.from('%PDF-1.4\nnew synthetic') }
+        : { kind: 'document', mimeType: 'text/plain', fileName: 'new.txt', buffer: Buffer.alloc(0) };
+      await assert.rejects(service.reply({ chatId: 'chat', attachment: newer }), (error) => error instanceof UserFacingError);
+      await service.reply({ chatId: 'chat', text: 'What does the latest file say?' });
+      assert.equal(JSON.stringify(provider.requests.at(-1).body).includes('PREVIOUS-FILE-PRIVATE-CONTENT'), false);
+    });
   }
 });

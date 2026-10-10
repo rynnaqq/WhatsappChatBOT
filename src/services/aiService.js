@@ -3,6 +3,7 @@ import { performance } from 'node:perf_hooks';
 
 import { computeBackoffDelay, isAbortError, isRetryableProviderError } from './rateLimiter.js';
 import { AttachmentUserFacingError, prepareAttachment } from './attachmentService.js';
+import { AttachmentContext } from './attachmentContext.js';
 
 const MAX_TRANSIENT_RETRIES = 3;
 const GENERIC_ERROR = 'The AI service is temporarily unavailable. Please try again.';
@@ -50,6 +51,7 @@ export class AIService {
   #clientSignature;
   #memoryGeneration = 0;
   #prepareAttachment;
+  #attachmentContext = new AttachmentContext();
 
   constructor({ settingsRepo, memory, logger, clientFactory, sleep, random, prepareAttachment: attachmentPreparer } = {}) {
     if (!settingsRepo || typeof settingsRepo.get !== 'function') throw new TypeError('settingsRepo is required.');
@@ -68,12 +70,14 @@ export class AIService {
     const memoryGeneration = this.#memoryGeneration;
     const userText = typeof text === 'string' ? text : '';
     const operation = this.#beginOperation(settings.ai.timeoutSeconds);
+    let hasAttachment = Boolean(attachment);
 
     try {
+      if (attachment != null || imageBuffer != null) this.#attachmentContext.clear(chatId);
       let currentMessage;
       let attachmentMemory;
+      let prepared;
       if (attachment !== undefined && attachment !== null) {
-        let prepared;
         try {
           prepared = await this.#prepareAttachment(attachment, { ai: settings.ai, signal: operation.signal });
         } catch (error) {
@@ -90,6 +94,22 @@ export class AIService {
       } else {
         this.#validateImage(imageBuffer, settings.ai);
         currentMessage = buildCurrentMessage(userText, imageBuffer, mimeType);
+        if (!imageBuffer) {
+          const cached = this.#attachmentContext.get(chatId, {
+            history: this.#memory.get(chatId, settings.bot.memoryLimit),
+            scope: attachmentScope(settings.ai),
+            visionEnabled: settings.ai.visionEnabled,
+            mediaEnabled: settings.ai.mediaEnabled,
+          });
+          if (cached) {
+            hasAttachment = true;
+            currentMessage.content = [
+              { type: 'text', text: userText || 'Please help me with the uploaded file.' },
+              { type: 'text', text: 'Contents of the most recently uploaded attachment in this chat follow.' },
+              ...cached.parts,
+            ];
+          }
+        }
       }
       let messages = this.#buildMessages(settings, chatId, currentMessage);
       let overflowRetried = false;
@@ -123,10 +143,19 @@ export class AIService {
         : userText;
       if (memoryGeneration === this.#memoryGeneration) {
         this.#memory.append(chatId, rememberedText, answer, settings.bot.memoryLimit);
+        if (prepared && settings.bot.memoryLimit > 0) {
+          const isImage = attachment.kind === 'image' || attachment.kind === 'sticker' || attachment.mimeType.trim().toLowerCase().startsWith('image/');
+          this.#attachmentContext.set(chatId, {
+            parts: prepared.parts,
+            memoryText: rememberedText,
+            scope: attachmentScope(settings.ai),
+            control: isImage ? 'vision' : 'media',
+          });
+        }
       }
       return answer;
     } catch (error) {
-      throw this.#toUserFacingError(error, operation.signal, Boolean(attachment));
+      throw this.#toUserFacingError(error, operation.signal, hasAttachment);
     } finally {
       operation.finish();
     }
@@ -135,6 +164,7 @@ export class AIService {
   resetMemory() {
     this.#memoryGeneration += 1;
     this.#memory.clearAll();
+    this.#attachmentContext.clearAll();
   }
 
   async testConnection() {
@@ -243,6 +273,10 @@ export class AIService {
     }
     return new UserFacingError(GENERIC_ERROR);
   }
+}
+
+function attachmentScope(ai) {
+  return JSON.stringify([ai.baseURL, ai.model, ai.attachmentTransport ?? 'auto']);
 }
 
 function buildCurrentMessage(text, imageBuffer, mimeType) {

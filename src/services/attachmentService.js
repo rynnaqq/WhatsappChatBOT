@@ -61,13 +61,18 @@ export async function prepareAttachment(attachment, { ai = {}, signal } = {}) {
       const inventory = inspectZip(buffer);
       if (!office.required.every((name) => inventory.names.includes(name))) throw new AttachmentUserFacingError('The Office document is corrupt or does not match its file type.');
       if (officeType.startsWith('od') && inventory.odfMimeType !== office.mime) throw new AttachmentUserFacingError('The OpenDocument container does not match its declared file type.');
-      const parsed = await parseOfficeInWorker(buffer, officeType, signal);
+      const parsed = await parseDocumentInWorker(buffer, officeType, signal);
       throwIfAborted(signal);
       return textResult('document', fileName, office.mime, buffer.byteLength, parsed.value, parsed.truncated);
     }
     if (EXECUTABLE_EXTENSIONS.has(ext)) throw new AttachmentUserFacingError('Executable attachments cannot be processed.');
     if (mimeType === 'application/pdf' || ext === 'pdf') {
       if (mimeType !== 'application/pdf' || !buffer.subarray(0, 5).equals(Buffer.from('%PDF-'))) throw new AttachmentUserFacingError('The PDF file is invalid or does not match its file type.');
+      if (!isExplicitNativePdfTransport(ai)) {
+        const parsed = await parseDocumentInWorker(buffer, 'pdf', signal);
+        throwIfAborted(signal);
+        if (parsed.value.trim()) return textResult('document', fileName, mimeType, buffer.byteLength, parsed.value, parsed.truncated);
+      }
       return nativeResult('document', buffer, mimeType, fileName, ai);
     }
     if (isPlainText(mimeType, ext)) {
@@ -123,6 +128,10 @@ function use9RouterGeminiTransport(ai) {
   if (ai.attachmentTransport === '9router-gemini') return true;
   if (ai.attachmentTransport === 'file') return false;
   return typeof ai.model === 'string' && /^ag\/gemini(?:[-.]|$)/i.test(ai.model);
+}
+
+function isExplicitNativePdfTransport(ai) {
+  return ai.attachmentTransport === 'file' || ai.attachmentTransport === '9router-gemini';
 }
 
 function textResult(kind, fileName, mimeType, byteLength, text, truncated) {
@@ -260,9 +269,10 @@ function isSafeArchiveName(name) {
   return !name.split('/').some((part) => part === '..');
 }
 
-async function parseOfficeInWorker(buffer, fileType, signal) {
+async function parseDocumentInWorker(buffer, fileType, signal) {
   throwIfAborted(signal);
   if (activeOfficeWorkers >= MAX_ACTIVE_OFFICE_WORKERS) throw new AttachmentUserFacingError('The document reader is busy. Please retry shortly.');
+  const label = fileType === 'pdf' ? 'PDF' : 'Office document';
   activeOfficeWorkers += 1;
   let worker;
   try {
@@ -310,14 +320,14 @@ async function parseOfficeInWorker(buffer, fileType, signal) {
       callback();
     };
     const onAbort = () => finishAfterTermination(() => reject(signal.reason ?? new DOMException('The operation was aborted.', 'AbortError')));
-    const timer = setTimeout(() => finishAfterTermination(() => reject(new AttachmentUserFacingError('The Office document took too long to process.'))), OFFICE_TIMEOUT_MS);
+    const timer = setTimeout(() => finishAfterTermination(() => reject(new AttachmentUserFacingError(`The ${label} took too long to process.`))), OFFICE_TIMEOUT_MS);
     timer.unref?.();
     signal?.addEventListener('abort', onAbort, { once: true });
     worker.once('message', (message) => finishAfterTermination(() => message?.ok
       ? resolve({ value: message.text, truncated: Boolean(message.truncated) })
-      : reject(new AttachmentUserFacingError('The Office document is corrupt, encrypted, or could not be read safely.'))));
-    worker.once('error', () => finishAfterTermination(() => reject(new AttachmentUserFacingError('The Office document could not be processed safely.'))));
-    worker.once('exit', () => finishAfterExit(() => reject(new AttachmentUserFacingError('The Office document could not be processed safely.'))));
+      : reject(new AttachmentUserFacingError(`The ${label} is corrupt, encrypted, or could not be read safely.`))));
+    worker.once('error', () => finishAfterTermination(() => reject(new AttachmentUserFacingError(`The ${label} could not be processed safely.`))));
+    worker.once('exit', () => finishAfterExit(() => reject(new AttachmentUserFacingError(`The ${label} could not be processed safely.`))));
   });
 }
 

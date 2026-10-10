@@ -37,7 +37,7 @@ async function harness(t) {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise(resolve => { server.close(resolve); server.closeAllConnections(); }));
   const settings = structuredClone(DEFAULT_SETTINGS);
-  Object.assign(settings.ai, { baseURL: `http://127.0.0.1:${server.address().port}/v1`, apiKey: 'synthetic-key', model: 'ag/gemini-3.8-flash-high' });
+  Object.assign(settings.ai, { baseURL: `http://127.0.0.1:${server.address().port}/v1`, apiKey: 'synthetic-key', model: 'ag/gemini-3.8-flash-high', attachmentTransport: '9router-gemini' });
   Object.assign(settings.bot, { replyTrigger: 'mention-or-reply', typingIndicator: false });
   const repo = { get: () => structuredClone(settings) };
   const memory = new MemoryService();
@@ -113,4 +113,21 @@ test('unsupported binary files produce a clear quoted response without contactin
   assert.match(h.sock.sent[0].text, /executable.*cannot be processed/i);
   assert.equal(h.sock.sent[0].quoted, msg);
   assert.deepEqual(h.memory.get('person@s.whatsapp.net', 6), []);
+});
+
+test('a private text reply after a DOCX upload still sends the extracted document to the model', async t => {
+  const h = await harness(t);
+  const upload = h.message('office-upload', 'documentMessage', docx(), DOCX_MIME, 'notes.docx');
+  await h.handler.handleUpsert(h.sock, { type: 'notify', messages: [upload] });
+  const followup = {
+    key: { id: 'office-followup', remoteJid: 'person@s.whatsapp.net', fromMe: false },
+    messageTimestamp: Math.floor(Date.now() / 1000),
+    message: { conversation: 'What word is in that file?' },
+  };
+  await h.handler.handleUpsert(h.sock, { type: 'notify', messages: [followup] });
+  assert.equal(h.requests.length, 2);
+  assert.match(JSON.stringify(h.requests[1].messages.at(-1).content), /PINEAPPLE fixture text/);
+  assert.match(JSON.stringify(h.requests[1].messages.at(-1).content), /What word is in that file/);
+  assert.deepEqual(h.downloads, ['office-upload']);
+  assert.equal(h.sock.sent.at(-1).quoted, followup);
 });

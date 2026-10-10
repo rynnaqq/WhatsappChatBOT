@@ -1,5 +1,14 @@
 # Implementation progress
 
+## PDF/DOCX reading fix — 2026-10-10
+
+- Reproduced loss of file contents on the text-only question after upload. Added a bounded latest-file context in RAM with history/scope/control checks, fixed upload lifetime, byte/chat eviction, and account-reset protection. Normal input history still stores metadata; files are not written to disk.
+- Automatic PDF handling now reads text locally, including multi-field PDFs. Valid scanned PDFs retain native fallback; explicit native transports remain available. Parsing shares the existing two-worker limit and disables the library's separate PDF subprocess.
+- Added DOCX paragraph/table extraction coverage and real incoming DOCX-to-text-follow-up integration. Seven new follow-up tests failed before integration and passed afterward.
+- Fresh verification: 208/208 tests and 37 syntax checks passed. Live synthetic PDF and DOCX acknowledgements were followed by successful content questions through 9Router; saved settings were preserved.
+- Independent review cleared the context lifecycle after a regression fix: a failed newer upload now removes the previous file instead of presenting it as the most recent attachment. Both invalid-file and provider-rejection cases were reproduced before the fix and pass afterward.
+- A complete source ZIP passed a fresh production install, 82 packaged AI/context/attachment/incoming tests, and CLI startup with health/login/authenticated settings on its assigned port. The overlay and startup preserved synthetic environment files, encrypted settings, and an auth marker. Update instructions call for Automatic attachment format and a nonzero conversation window.
+
 ## Incoming attachments — 2026-10-10
 
 - Added images/stickers, documents, voice notes/audio, and video/PTV to the incoming-message pipeline. Private chats accept enabled attachments without captions in the private-chat/group-addressed mode; groups still require a bot tag or reply. Legacy prefix mode remains available.

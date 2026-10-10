@@ -1,6 +1,27 @@
 # Verification
 
-## Incoming attachments — 2026-10-10
+## PDF/DOCX reading and follow-ups — 2026-10-10
+
+Investigation reproduced a lost-content follow-up: the upload request contained the extracted document, but the next text-only request received only a filename/type/size placeholder. Automatic PDFs also depended entirely on native model PDF support. Automatic mode now extracts text PDFs locally in the bounded document worker, as it already does for DOCX. Valid scanned PDFs retain native fallback; explicit native formats preserve the original PDF transport. Malformed PDFs receive a safe parsing error.
+
+A separate latest-file context now reinserts prepared content into same-chat follow-ups without changing normal input-message history or writing file contents to disk. It is bounded by 32 MB total encoded content, 100 chats, the configured conversation window, and a fixed 15-minute upload lifetime. Provider/model/format scope, vision/media controls, and account-generation guards prevent inappropriate reuse; account reset clears it.
+
+| Check | Result |
+| --- | --- |
+| Follow-up regression | Seven new AI/incoming-message tests first failed because file contents were absent, then passed with the integrated fix. |
+| `npm test` on Node 24.20.0 | 208 passed; zero failures, cancellations, or skips. |
+| `npm run check` | All 37 JavaScript files passed. |
+| Real document parsing | Multi-field text PDF, scanned PDF native fallback, malformed PDF rejection, disabled/size guards, and DOCX paragraph/table extraction passed. PDF parsing uses `separateProcess: false` inside the existing worker; no OCR or new dependencies. |
+| Context isolation and limits | Tests cover same-chat access, account reset, history expiry, scope/control invalidation, original upload TTL, LRU/global byte limits, UTF-8 accounting, defensive copies, and retaining file contents during the one context-overflow retry. |
+| Failed replacement regression | Provider rejection and an invalid newer upload first reproduced reuse of the previous file. Both now clear the previous context before validation; the new regression cases pass. |
+| Focused integration review | Cleared after the failed-replacement fix. Successful uploads still cache only after a successful current-account response. |
+| Live configured 9Router | Synthetic PDF and DOCX text was extracted locally. An initial READY acknowledgement omitted the answer; a later text-only question correctly recovered the test word from each uploaded document through the production service. Saved settings remained byte-for-byte unchanged. |
+| Complete source ZIP | Includes the latest-file context, parser worker, manifests, dashboard assets, and update instructions. Runtime environment files, storage, and dependencies are excluded. |
+| Clean production package | A fresh `npm ci --omit=dev --ignore-scripts` and all 82 packaged AI/context/attachment/incoming-message tests passed. The exported CLI served health, login, and authenticated settings on its assigned port, loaded legacy encrypted settings, and preserved synthetic environment files, settings, and an existing auth marker byte-for-byte. Only the isolated fixture process was started and stopped. |
+
+These live probes used synthetic documents with the authorized key privately. The operator's original failed files were not supplied, and the remote Pterodactyl runtime was not accessed. Full application and provider checks establish the corrected behavior; deployment requires the new source ZIP or checkout and a restart. Earlier browser results below apply to the unchanged dashboard.
+
+## Previous attachment release — 2026-10-10
 
 The current application supports private-chat attachments without a prefix in the private-chat/group-addressed trigger mode. Group attachments require a mention of the linked bot or a reply to its message in the same chat. Existing explicit prefix-mode settings retain their behavior.
 

@@ -28,6 +28,73 @@ function zipped(entries) {
   ])), { level: 0 }));
 }
 
+function pdfStream(bytes, dictionary = '') {
+  const data = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes, 'binary');
+  return Buffer.concat([
+    Buffer.from(`<< ${dictionary} /Length ${data.length} >>\nstream\n`, 'binary'),
+    data,
+    Buffer.from('\nendstream', 'binary'),
+  ]);
+}
+
+function pdfDocument(objects) {
+  const chunks = [Buffer.from('%PDF-1.4\n%\xe2\xe3\xcf\xd3\n', 'binary')];
+  const offsets = [0];
+  let length = chunks[0].length;
+  for (let index = 0; index < objects.length; index += 1) {
+    offsets.push(length);
+    const body = Buffer.isBuffer(objects[index]) ? objects[index] : Buffer.from(objects[index], 'binary');
+    const object = Buffer.concat([
+      Buffer.from(`${index + 1} 0 obj\n`, 'ascii'),
+      body,
+      Buffer.from('\nendobj\n', 'ascii'),
+    ]);
+    chunks.push(object);
+    length += object.length;
+  }
+  const xrefOffset = length;
+  const xref = [
+    `xref\n0 ${objects.length + 1}\n`,
+    '0000000000 65535 f \n',
+    ...offsets.slice(1).map((offset) => `${String(offset).padStart(10, '0')} 00000 n \n`),
+    `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`,
+  ].join('');
+  chunks.push(Buffer.from(xref, 'ascii'));
+  return Buffer.concat(chunks);
+}
+
+function textPdfFixture() {
+  const content = [
+    'BT',
+    '/F1 14 Tf',
+    '72 720 Td',
+    '(Customer Name: Ada Lovelace) Tj',
+    '0 -24 Td',
+    '(Invoice Number: INV-2048) Tj',
+    '0 -24 Td',
+    '(Total Due: 125.50 USD) Tj',
+    'ET',
+  ].join('\n');
+  return pdfDocument([
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>',
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    pdfStream(content),
+  ]);
+}
+
+function imageOnlyPdfFixture() {
+  const image = Buffer.from([0x80]);
+  return pdfDocument([
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /XObject << /Im1 4 0 R >> >> /Contents 5 0 R >>',
+    pdfStream(image, '/Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8'),
+    pdfStream('q\n100 0 0 100 72 600 cm\n/Im1 Do\nQ'),
+  ]);
+}
+
 test('image preparation emits a data URL while memory keeps metadata only', async () => {
   assert.equal(typeof prepareAttachment, 'function');
   const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
@@ -68,7 +135,9 @@ test('audio, video, and PDF use native file parts and default media settings', a
     ['document', 'application/pdf', 'paper.pdf', Buffer.from('%PDF-1.7\n')],
   ];
   for (const [kind, mimeType, fileName, buffer] of cases) {
-    const result = await prepareAttachment({ kind, mimeType, fileName, buffer }, { ai: {} });
+    const result = await prepareAttachment({ kind, mimeType, fileName, buffer }, {
+      ai: mimeType === 'application/pdf' ? { attachmentTransport: 'file' } : {},
+    });
     assert.deepEqual(result.parts, [{
       type: 'file',
       file: { filename: fileName, file_data: `data:${mimeType};base64,${buffer.toString('base64')}` },
@@ -87,7 +156,7 @@ test('attachment transport selects verified 9Router Gemini parts without duplica
   for (const [kind, mimeType, fileName, expectedType] of cases) {
     const buffer = mimeType === 'application/pdf' ? Buffer.from('%PDF-1.7\n') : Buffer.from('media');
     const result = await prepareAttachment({ kind, mimeType, fileName, buffer }, {
-      ai: { ...DEFAULT_AI, model: 'ag/gemini-3.8-flash-high', attachmentTransport: 'auto' },
+      ai: { ...DEFAULT_AI, model: 'ag/gemini-3.8-flash-high', attachmentTransport: '9router-gemini' },
     });
     assert.equal(result.parts.length, 1);
     assert.equal(result.parts[0].type, expectedType);
@@ -103,6 +172,63 @@ test('attachment transport selects verified 9Router Gemini parts without duplica
     kind: 'video', mimeType: 'video/webm', fileName: 'clip.webm', buffer: Buffer.from('video'),
   }), { ai: { ...DEFAULT_AI, model: 'other-model', attachmentTransport: '9router-gemini' } });
   assert.equal(forcedRouter.parts[0].type, 'image_url');
+});
+
+test('automatic PDF handling extracts bounded text from a real multi-field document', async () => {
+  const buffer = textPdfFixture();
+  const result = await prepareAttachment(attachment({
+    buffer, mimeType: 'application/pdf', fileName: 'invoice.pdf',
+  }), { ai: DEFAULT_AI });
+
+  assert.equal(result.parts.length, 1);
+  assert.equal(result.parts[0].type, 'text');
+  assert.match(result.parts[0].text, /Customer Name:\s+Ada Lovelace/);
+  assert.match(result.parts[0].text, /Invoice Number:\s+INV-2048/);
+  assert.match(result.parts[0].text, /Total Due:\s+125\.50 USD/);
+  assert.equal(result.memoryText, `[document sent: invoice.pdf (application/pdf, ${buffer.byteLength} bytes)]`);
+  assert.equal(result.memoryText.includes('Ada Lovelace'), false);
+});
+
+test('explicit automatic PDF transport also extracts text locally', async () => {
+  const result = await prepareAttachment(attachment({
+    buffer: textPdfFixture(), mimeType: 'application/pdf', fileName: 'invoice.pdf',
+  }), { ai: { ...DEFAULT_AI, attachmentTransport: 'auto' } });
+
+  assert.equal(result.parts[0].type, 'text');
+  assert.match(result.parts[0].text, /Invoice Number:\s+INV-2048/);
+});
+
+test('automatic image-only PDF handling preserves native fallback without OCR', async () => {
+  const buffer = imageOnlyPdfFixture();
+  const result = await prepareAttachment(attachment({
+    buffer, mimeType: 'application/pdf', fileName: 'scan.pdf',
+  }), { ai: DEFAULT_AI });
+
+  assert.equal(result.parts.length, 1);
+  assert.equal(result.parts[0].type, 'file');
+  assert.equal(result.parts[0].file.filename, 'scan.pdf');
+  assert.equal(result.parts[0].file.file_data, `data:application/pdf;base64,${buffer.toString('base64')}`);
+});
+
+test('automatic malformed PDFs fail safely instead of falling back to native transport', async () => {
+  await assert.rejects(
+    prepareAttachment(attachment({
+      buffer: Buffer.from('%PDF-1.7\nmalformed'), mimeType: 'application/pdf', fileName: 'broken.pdf',
+    }), { ai: DEFAULT_AI }),
+    (error) => error.code === 'ATTACHMENT_USER_FACING' && /PDF|corrupt|encrypted|read safely/i.test(error.message),
+  );
+});
+
+test('PDF parsing remains behind file enablement and size guards', async () => {
+  const pdf = attachment({ buffer: textPdfFixture(), mimeType: 'application/pdf', fileName: 'invoice.pdf' });
+  await assert.rejects(
+    prepareAttachment(pdf, { ai: { ...DEFAULT_AI, mediaEnabled: false } }),
+    (error) => error.code === 'ATTACHMENT_USER_FACING' && /disabled/i.test(error.message),
+  );
+  await assert.rejects(
+    prepareAttachment(pdf, { ai: { ...DEFAULT_AI, maxFileMB: 0.0001 } }),
+    (error) => error.code === 'ATTACHMENT_USER_FACING' && /limit/i.test(error.message),
+  );
 });
 
 test('generic Ogg MIME is normalized to a media MIME for audio and document transports', async () => {
@@ -276,6 +402,17 @@ test('DOCX, XLSX, PPTX, ODT, ODS, and ODP are parsed in an isolated worker', asy
   }
 });
 
+test('DOCX parsing extracts both paragraph and table field content', async () => {
+  const docx = officeFixtures()[0];
+  const result = await prepareAttachment(attachment(docx), { ai: DEFAULT_AI });
+
+  assert.match(result.parts[0].text, /Hello DOCX/);
+  assert.match(result.parts[0].text, /Account Owner/);
+  assert.match(result.parts[0].text, /Ada Lovelace/);
+  assert.match(result.parts[0].text, /Balance/);
+  assert.match(result.parts[0].text, /125\.50 USD/);
+});
+
 test('Office detection accepts validated generic MIME and specific MIME without an Office extension', async () => {
   const docx = officeFixtures()[0];
   for (const candidate of [
@@ -360,7 +497,7 @@ function officeFixtures() {
       buffer: zipped({
         '[Content_Types].xml': contentTypes('<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'),
         '_rels/.rels': rootRels('word/document.xml', officeRel),
-        'word/document.xml': '<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Hello DOCX</w:t></w:r></w:p></w:body></w:document>',
+        'word/document.xml': '<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Hello DOCX</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Account Owner</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Ada Lovelace</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Balance</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>125.50 USD</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>',
       }),
     },
     {
