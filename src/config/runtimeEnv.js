@@ -17,5 +17,11 @@ export function readRuntimeEnv({ env = process.env, filePath = defaultFilePath }
   for (const [name, value] of Object.entries(env)) {
     if (value !== undefined && value !== '') merged[name] = value;
   }
+
+  // Wings exports the current primary allocation; a stored PORT may be stale.
+  if (env.SERVER_PORT !== undefined && env.SERVER_PORT !== '') {
+    merged.PORT = env.SERVER_PORT;
+    if (env.HOST === undefined || env.HOST === '') merged.HOST = '0.0.0.0';
+  }
   return merged;
 }

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { copyFile, cp, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { copyFile, cp, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -78,6 +78,77 @@ test('file values, exported values and loader defaults merge without mutating in
   assert.equal(config.port, 33506);
   assert.equal(config.logLevel, 'debug');
   assert.equal(config.sessionTtlMs, 43_200_000);
+});
+
+test('Pterodactyl allocation overrides stale ports and a local-only file host', async (t) => {
+  const directory = await temporaryDirectory();
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const filePath = path.join(directory, '.env');
+  const fileContents = `DASHBOARD_PASSWORD=${validPassword}\nSESSION_SECRET=${validSecret}\nPORT=3000\nHOST=127.0.0.1\n`;
+  await writeFile(filePath, fileContents);
+  const exported = { SERVER_PORT: '41234', PORT: '33506', SERVER_IP: '203.0.113.10' };
+  const snapshot = { ...exported };
+
+  const config = loadEnv(readRuntimeEnv({ env: exported, filePath }));
+
+  assert.equal(config.port, 41234);
+  assert.equal(config.host, '0.0.0.0');
+  assert.equal(config.dashboardPassword, validPassword);
+  assert.equal(config.sessionSecret, validSecret);
+  assert.deepEqual(exported, snapshot);
+  assert.equal(await readFile(filePath, 'utf8'), fileContents);
+});
+
+test('a changed Pterodactyl allocation is used on the next configuration load', async (t) => {
+  const directory = await temporaryDirectory();
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const filePath = path.join(directory, '.env');
+  await writeFile(filePath, `DASHBOARD_PASSWORD=${validPassword}\nSESSION_SECRET=${validSecret}\nPORT=33506\n`);
+
+  for (const allocatedPort of ['41234', '42345']) {
+    const config = loadEnv(readRuntimeEnv({ env: { SERVER_PORT: allocatedPort }, filePath }));
+    assert.equal(config.port, Number(allocatedPort));
+    assert.equal(config.host, '0.0.0.0');
+  }
+});
+
+test('Pterodactyl uses a public bind address unless an exported host is supplied', async (t) => {
+  const directory = await temporaryDirectory();
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const filePath = path.join(directory, '.env');
+  await writeFile(filePath, `DASHBOARD_PASSWORD=${validPassword}\nSESSION_SECRET=${validSecret}\nHOST=127.0.0.1\n`);
+
+  for (const [host, expected] of [[undefined, '0.0.0.0'], ['', '0.0.0.0'], ['127.0.0.1', '127.0.0.1'], ['::', '::']]) {
+    const config = loadEnv(readRuntimeEnv({ env: { SERVER_PORT: '41234', HOST: host }, filePath }));
+    assert.equal(config.host, expected);
+  }
+});
+
+test('a blank exported allocation or a file-only SERVER_PORT preserves local port selection', async (t) => {
+  const directory = await temporaryDirectory();
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const filePath = path.join(directory, '.env');
+  await writeFile(filePath, `DASHBOARD_PASSWORD=${validPassword}\nSESSION_SECRET=${validSecret}\nPORT=33506\nHOST=127.0.0.1\nSERVER_PORT=41234\n`);
+
+  for (const [exported, expected] of [[{}, 33506], [{ SERVER_PORT: '' }, 33506], [{ SERVER_PORT: '', PORT: '42345' }, 42345]]) {
+    const config = loadEnv(readRuntimeEnv({ env: exported, filePath }));
+    assert.equal(config.port, expected);
+    assert.equal(config.host, '127.0.0.1');
+  }
+});
+
+test('an invalid allocation is rejected instead of listening on an unrelated fallback port', async (t) => {
+  const directory = await temporaryDirectory();
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const filePath = path.join(directory, '.env');
+  await writeFile(filePath, `DASHBOARD_PASSWORD=${validPassword}\nSESSION_SECRET=${validSecret}\nPORT=33506\n`);
+
+  for (const allocatedPort of ['0', '65536', '41234abc', '-1', ' ']) {
+    assert.throws(
+      () => loadEnv(readRuntimeEnv({ env: { SERVER_PORT: allocatedPort }, filePath })),
+      /PORT must be an integer from 1 to 65535/,
+    );
+  }
 });
 
 test('an unreadable env path produces a safe configuration error', async (t) => {

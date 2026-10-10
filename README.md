@@ -37,8 +37,10 @@ Deploy the complete current `main` branch. An earlier commit omitted `src/storag
 
 1. Stop the server in the panel, then update the checkout with `git pull --ff-only` or redeploy the latest repository files. Preserve your existing `.env` and root `storage/` data.
 2. Run `npm ci --omit=dev`. Run `npm run setup` if `.env` has not been created; it preserves an existing file.
-3. Set `HOST=0.0.0.0` and set `PORT` to the port allocated by the panel. Set these in `.env` or the process environment; non-empty exported values take precedence, while empty exported values fall back to `.env`. Keep valid `DASHBOARD_PASSWORD` and `SESSION_SECRET` values.
+3. The bot automatically uses Pterodactyl's exported `SERVER_PORT`, even if `.env` or a Startup `PORT` still contains an old port. It also binds to `0.0.0.0` on Pterodactyl; leave the Startup `HOST` blank or set it to `0.0.0.0`. Keep valid `DASHBOARD_PASSWORD` and `SESSION_SECRET` values.
 4. Set the startup command to `npm start`, then start the server and open the dashboard using the panel's allocated address and port.
+
+Changing the primary allocation takes effect on the next server start; no `.env` port edit is needed. Pterodactyl documents `SERVER_PORT` as the primary allocation's port in its [built-in environment variables](https://docs.pterodactyl.io/v1/guides/egg-creation/egg-variables). If a custom host does not export it, set `PORT` to the allocated port and `HOST=0.0.0.0` manually.
 
 The optional npm install-script notices shown for Baileys and protobufjs do not cause the missing local module error. If that error remains after updating, check that both files above exist under `/home/container/src/storage/`; the deployed checkout is still incomplete.
 
@@ -47,18 +49,19 @@ If startup reports `DASHBOARD_PASSWORD` or `SESSION_SECRET` configuration errors
 - In the panel File Manager, place `.env` directly in `/home/container`, beside `package.json`. The filename must be `.env`; `.env.example` is a template.
 - `npm run setup` generates private credentials when `.env` is absent. It preserves existing files, including templates with blank values. For an existing file, fill `DASHBOARD_PASSWORD` with 12–1,024 characters and `SESSION_SECRET` with a random value of at least 32 characters.
 - Empty Startup variables fall back to values in the project-root `.env`. A non-empty Startup value still overrides the file, so replace a short `SESSION_SECRET` with the complete valid value from `.env`, or clear that Startup field to use the file. Required credentials are still validated before startup.
-- Keep `HOST=0.0.0.0`, set `PORT` to the allocated port, and restart after changing startup configuration. Keep a previously used valid `SESSION_SECRET` stable so saved provider keys remain decryptable.
+- Leave the Startup `HOST` blank or use `0.0.0.0`, and restart after changing the allocation or startup configuration. Keep a previously used valid `SESSION_SECRET` stable so saved provider keys remain decryptable.
 
 ## Configuration
 
-Configuration is loaded from the project-root `.env` at startup, regardless of the process working directory. Non-empty process environment values override the file. Bot and provider settings are edited in the dashboard and apply to the next request without restarting the server.
+Configuration is loaded from the project-root `.env` at startup, regardless of the process working directory. Non-empty process environment values override the file. An exported `SERVER_PORT` takes priority over both exported and file `PORT`; without it, `PORT` keeps its usual precedence and local default. A `SERVER_PORT` written only in `.env` does not activate Pterodactyl detection. Bot and provider settings are edited in the dashboard and apply to the next request without restarting the server.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `DASHBOARD_PASSWORD` | Required | 12–1,024 characters. The server rejects missing or weak values. |
 | `SESSION_SECRET` | Required | At least 32 characters; signs sessions and derives the API-key encryption key. |
-| `PORT` | `3000` | HTTP and WebSocket port. |
-| `HOST` | `127.0.0.1` | Listen address. |
+| `SERVER_PORT` | Provided by Pterodactyl | Current primary allocation; overrides `PORT` when exported by the server. |
+| `PORT` | `3000` | HTTP and WebSocket port when no exported `SERVER_PORT` is available. |
+| `HOST` | `127.0.0.1` locally; `0.0.0.0` on Pterodactyl | Listen address. A non-empty exported `HOST` overrides either default. |
 | `STORAGE_DIR` | `./storage` | WhatsApp credentials and settings; relative to the working directory. |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, or `error`. |
 | `TRUST_PROXY` | `false` | Use `true` behind **one trusted reverse proxy** that sanitizes forwarded headers. |
