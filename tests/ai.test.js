@@ -22,6 +22,8 @@ function settings(overrides = {}) {
     bot: {
       systemPrompt: 'Stay concise.',
       memoryLimit: 3,
+      personaStyle: 'custom',
+      stickerReplies: 'off',
       ...overrides.bot,
     },
   };
@@ -92,6 +94,98 @@ test('reply sends system, history, and current text through the official client 
     { role: 'assistant', content: 'hello' },
   ]);
   assert.equal(provider.requests[0].headers.authorization, 'Bearer provider-secret');
+});
+
+test('replyWithMedia returns one safe sticker choice while memory keeps only user-visible assistant text', async (t) => {
+  const provider = await startProvider(t, ({ response }) => sendJson(response, 200, completion('Senang ketemu kamu! 😊\n[[sticker:happy]]')));
+  const memory = new MemoryService();
+  const service = new AIService({
+    settingsRepo: fakeRepo(settings({
+      ai: { baseURL: provider.baseURL },
+      bot: { personaStyle: 'feminine', stickerReplies: 'contextual' },
+    })),
+    memory,
+  });
+
+  const result = await service.replyWithMedia({ chatId: 'chat', text: 'Hai, apa kabar?' });
+
+  assert.deepEqual(result, { text: 'Senang ketemu kamu! 😊', stickerId: 'happy' });
+  assert.equal(provider.requests.length, 1);
+  assert.match(provider.requests[0].body.messages[0].content, /\[\[sticker:happy\]\]/);
+  assert.deepEqual(memory.get('chat', 3).slice(-2), [
+    { role: 'user', content: 'Hai, apa kabar?' },
+    { role: 'assistant', content: 'Senang ketemu kamu! 😊' },
+  ]);
+});
+
+test('legacy reply returns readable text for a valid sticker-only answer without making a second provider call', async (t) => {
+  const provider = await startProvider(t, ({ response }) => sendJson(response, 200, completion('[[sticker:shy]]')));
+  const memory = new MemoryService();
+  const service = new AIService({
+    settingsRepo: fakeRepo(settings({
+      ai: { baseURL: provider.baseURL },
+      bot: { personaStyle: 'feminine', stickerReplies: 'contextual' },
+    })),
+    memory,
+  });
+
+  const answer = await service.reply({ chatId: 'chat', text: 'Kamu lucu deh >.<' });
+
+  assert.ok(answer.length > 0);
+  assert.equal(answer.includes('[[sticker:'), false);
+  assert.equal(provider.requests.length, 1);
+  assert.equal(JSON.stringify(memory.get('chat', 3)).includes('[[sticker:'), false);
+});
+
+test('disabled sticker replies strip a trailing provider control marker without selecting media', async (t) => {
+  const provider = await startProvider(t, ({ response }) => sendJson(response, 200, completion('Plain answer.\n[[sticker:love]]')));
+  const service = new AIService({
+    settingsRepo: fakeRepo(settings({ ai: { baseURL: provider.baseURL } })),
+    memory: new MemoryService(),
+  });
+
+  assert.deepEqual(
+    await service.replyWithMedia({ chatId: 'chat', text: 'Hello' }),
+    { text: 'Plain answer.', stickerId: null },
+  );
+  assert.equal(provider.requests[0].body.messages[0].content, 'Stay concise.');
+});
+
+test('replyWithMedia preserves an entirely indented sticker marker as literal model text', async (t) => {
+  const provider = await startProvider(t, ({ response }) => sendJson(response, 200, completion('    [[sticker:happy]]')));
+  const service = new AIService({
+    settingsRepo: fakeRepo(settings({
+      ai: { baseURL: provider.baseURL },
+      bot: { personaStyle: 'feminine', stickerReplies: 'contextual' },
+    })),
+    memory: new MemoryService(),
+  });
+
+  assert.deepEqual(
+    await service.replyWithMedia({ chatId: 'chat', text: 'Hai!' }),
+    { text: '    [[sticker:happy]]', stickerId: null },
+  );
+  assert.equal(provider.requests.length, 1);
+});
+
+test('contextual sticker replies are suppressed for attachments even if the provider emits a known marker', async (t) => {
+  const provider = await startProvider(t, ({ response }) => sendJson(response, 200, completion('The total is 42.\n[[sticker:happy]]')));
+  const service = new AIService({
+    settingsRepo: fakeRepo(settings({
+      ai: { baseURL: provider.baseURL },
+      bot: { personaStyle: 'feminine', stickerReplies: 'contextual' },
+    })),
+    memory: new MemoryService(),
+  });
+
+  const result = await service.replyWithMedia({
+    chatId: 'chat',
+    text: 'Read this table.',
+    attachment: { kind: 'document', mimeType: 'text/plain', fileName: 'table.txt', buffer: Buffer.from('total=42') },
+  });
+
+  assert.deepEqual(result, { text: 'The total is 42.', stickerId: null });
+  assert.equal(provider.requests[0].body.messages[0].content.includes('[[sticker:'), false);
 });
 
 test('reply sends images as data URLs but stores only the text placeholder', async (t) => {

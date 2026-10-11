@@ -4,6 +4,7 @@ import { performance } from 'node:perf_hooks';
 import { computeBackoffDelay, isAbortError, isRetryableProviderError } from './rateLimiter.js';
 import { AttachmentUserFacingError, prepareAttachment } from './attachmentService.js';
 import { AttachmentContext } from './attachmentContext.js';
+import { buildReplySystemPrompt, parseReply, stickerAllowed, stickerFallback } from './replyPersona.js';
 
 const MAX_TRANSIENT_RETRIES = 3;
 const GENERIC_ERROR = 'The AI service is temporarily unavailable. Please try again.';
@@ -66,11 +67,20 @@ export class AIService {
   }
 
   async reply({ chatId, text, imageBuffer, mimeType, attachment } = {}) {
+    const result = await this.#replyWithMedia({ chatId, text, imageBuffer, mimeType, attachment });
+    return result.text || stickerFallback(result.stickerId);
+  }
+
+  async replyWithMedia({ chatId, text, imageBuffer, mimeType, attachment } = {}) {
+    return this.#replyWithMedia({ chatId, text, imageBuffer, mimeType, attachment });
+  }
+
+  async #replyWithMedia({ chatId, text, imageBuffer, mimeType, attachment } = {}) {
     const settings = this.#settingsRepo.get();
     const memoryGeneration = this.#memoryGeneration;
     const userText = typeof text === 'string' ? text : '';
     const operation = this.#beginOperation(settings.ai.timeoutSeconds);
-    let hasAttachment = Boolean(attachment);
+    let hasAttachment = Boolean(attachment || imageBuffer);
 
     try {
       if (attachment != null || imageBuffer != null) this.#attachmentContext.clear(chatId);
@@ -111,7 +121,11 @@ export class AIService {
           }
         }
       }
-      let messages = this.#buildMessages(settings, chatId, currentMessage);
+      const replyContext = {
+        text: userText,
+        attachment: hasAttachment ? (attachment ?? { kind: imageBuffer ? 'image' : 'cached' }) : null,
+      };
+      let messages = this.#buildMessages(settings, chatId, currentMessage, replyContext);
       let overflowRetried = false;
       let response;
 
@@ -127,22 +141,24 @@ export class AIService {
             overflowRetried = true;
             const priorTurns = this.#memory.get(chatId, settings.bot.memoryLimit).length / 2;
             if (priorTurns > 0) this.#memory.trim(chatId, Math.max(0, priorTurns - 1));
-            messages = this.#buildMessages(settings, chatId, currentMessage);
+            messages = this.#buildMessages(settings, chatId, currentMessage, replyContext);
             continue;
           }
           throw error;
         }
       }
 
-      const answer = extractText(response);
-      if (!answer) throw new UserFacingError('The AI service returned an empty response. Please try again.');
+      const parsed = parseReply(extractText(response));
+      const stickerId = stickerAllowed(settings, replyContext) ? parsed.stickerId : null;
+      if (!parsed.text && !stickerId) throw new UserFacingError('The AI service returned an empty response. Please try again.');
+      const rememberedAnswer = parsed.text || stickerFallback(stickerId);
       const rememberedText = attachmentMemory
         ? `${attachmentMemory}${userText ? ` ${userText}` : ''}`
         : imageBuffer
         ? `[image sent]${userText ? ` ${userText}` : ''}`
         : userText;
       if (memoryGeneration === this.#memoryGeneration) {
-        this.#memory.append(chatId, rememberedText, answer, settings.bot.memoryLimit);
+        this.#memory.append(chatId, rememberedText, rememberedAnswer, settings.bot.memoryLimit);
         if (prepared && settings.bot.memoryLimit > 0) {
           const isImage = attachment.kind === 'image' || attachment.kind === 'sticker' || attachment.mimeType.trim().toLowerCase().startsWith('image/');
           this.#attachmentContext.set(chatId, {
@@ -153,7 +169,7 @@ export class AIService {
           });
         }
       }
-      return answer;
+      return { text: parsed.text, stickerId };
     } catch (error) {
       throw this.#toUserFacingError(error, operation.signal, hasAttachment);
     } finally {
@@ -189,9 +205,9 @@ export class AIService {
     }
   }
 
-  #buildMessages(settings, chatId, currentMessage) {
+  #buildMessages(settings, chatId, currentMessage, replyContext) {
     return [
-      { role: 'system', content: settings.bot.systemPrompt },
+      { role: 'system', content: buildReplySystemPrompt(settings, replyContext) },
       ...this.#memory.get(chatId, settings.bot.memoryLimit),
       currentMessage,
     ];
@@ -295,13 +311,13 @@ function buildCurrentMessage(text, imageBuffer, mimeType) {
 
 function extractText(response) {
   const content = response?.choices?.[0]?.message?.content;
-  if (typeof content === 'string') return content.trim();
+  if (typeof content === 'string') return content.trimEnd();
   if (!Array.isArray(content)) return '';
   return content
     .filter((part) => part?.type === 'text' && typeof part.text === 'string')
     .map((part) => part.text)
     .join('')
-    .trim();
+    .trimEnd();
 }
 
 function isContextOverflow(error) {

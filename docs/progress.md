@@ -1,5 +1,15 @@
 # Implementation progress
 
+## Feminine persona and native reaction stickers — 2026-10-11
+
+- Added a warm feminine runtime voice with gentle casual Indonesian aku/kamu phrasing, light emoji and kaomoji. The saved system prompt remains intact; Custom prompt only disables the style overlay. Older encrypted settings gain feminine/contextual defaults without rewriting credentials, prompt or trigger mode.
+- Added six original transparent pink-ribbon cat WebP reactions. The AI chooses one optional final control; visible text and memory remove the command suffix. Literal code examples retain their indentation and fences. The existing string reply API shares the same single provider operation with the new media reply API.
+- Incoming-message processing sends quoted native sticker bytes from a fixed local allowlist. Automatic reactions have a bounded per-chat two-minute pause and are withheld for attachments and recognized serious work; direct requests can bypass the pause. Off and Only when requested modes are enforced in the AI layer and outgoing transport. Existing group addressing, deduplication, rate limits and socket/account guards remain in place.
+- Sticker upload failure preserves an already sent text answer. Sticker-only failures or suppressed reactions use the same per-mood text fallback recorded in memory; a sad reaction no longer turns into a happy fallback.
+- Meaningful RED/GREEN regressions cover trailing command cleanup, nested/indented code literals, explicit refusals, how-to questions, serious greetings and fallback consistency. Fresh full verification passed 294/294 tests, all 50 JavaScript syntax checks and diff checks. Desktop/mobile dashboard persistence and axe audits passed at 1440px and 360px with zero detected violations or browser errors.
+- Independent read-only review cleared the integration after those fixes. Sticker selection and voice still depend on model instructions; contextual filtering is conservative rather than a semantic guarantee. No real WhatsApp sends, saved private credentials, production processes or remote deployment were used for these checks.
+- The complete 95-entry source ZIP passed a fresh production install with optional scripts disabled, 235 packaged AI/persona/sticker/document/settings tests and actual CLI health/login/authenticated-settings checks on its allocated port. Overlay and startup preserved synthetic `secrets.env`, legacy `.env`, encrypted settings, custom prompt and pairing-marker bytes; older settings received the new defaults in memory.
+
 ## PDF deadline follows dashboard Timeout — 2026-10-11
 
 - The repeated deployed `The PDF took too long to process.` reply comes from the PDF worker's fixed 25-second timer. That timer remained independent of the dashboard's AI Timeout after the rendering optimization. The latest logs also show two successful replies and a later, separate HTTP 503 provider failure after three transient retries.

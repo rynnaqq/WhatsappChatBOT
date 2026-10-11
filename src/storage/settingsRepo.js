@@ -27,6 +27,8 @@ export const DEFAULT_SETTINGS = Object.freeze({
       'Only include the answer meant for the user. Do not append unsolicited work summaries, task statuses, skipped/done notes, internal commentary, or notes about unimplemented work. Do not assume the user wants to build software. Offer coding or project help when they ask for it.',
       'When a request is unclear, ask one relevant question. Be honest about your abilities; do not claim you ran tools, edited files, or performed actions unless those actions actually happened.',
     ].join('\n'),
+    personaStyle: 'feminine',
+    stickerReplies: 'contextual',
     replyTrigger: 'prefix',
     commandPrefix: '!',
     memoryLimit: 6,
@@ -46,7 +48,7 @@ const AI_KEYS = new Set([
   'mediaEnabled', 'attachmentTransport', 'timeoutSeconds', 'maxImageMB', 'maxFileMB',
 ]);
 const BOT_KEYS = new Set([
-  'systemPrompt', 'replyTrigger', 'commandPrefix', 'memoryLimit', 'privateChatsOnly',
+  'systemPrompt', 'personaStyle', 'stickerReplies', 'replyTrigger', 'commandPrefix', 'memoryLimit', 'privateChatsOnly',
   'groupRepliesEnabled', 'typingIndicator', 'maxMessageAgeSeconds', 'markRead',
   'rateLimitPerMinute',
 ]);
@@ -234,6 +236,8 @@ function validateAndNormalize(input, { maxTokensCeiling, allowEmptyApiKey, addit
     },
     bot: {
       systemPrompt: bot.systemPrompt,
+      personaStyle: additionsOptional && bot.personaStyle === undefined ? DEFAULT_SETTINGS.bot.personaStyle : bot.personaStyle,
+      stickerReplies: additionsOptional && bot.stickerReplies === undefined ? DEFAULT_SETTINGS.bot.stickerReplies : bot.stickerReplies,
       replyTrigger: additionsOptional && bot.replyTrigger === undefined ? DEFAULT_SETTINGS.bot.replyTrigger : bot.replyTrigger,
       commandPrefix: bot.commandPrefix,
       memoryLimit: bot.memoryLimit,
@@ -270,6 +274,12 @@ function validateAndNormalize(input, { maxTokensCeiling, allowEmptyApiKey, addit
 
   if (typeof bot.systemPrompt !== 'string') fields['bot.systemPrompt'] = 'Required.';
   else if (bot.systemPrompt.length > 4000) fields['bot.systemPrompt'] = 'Must be at most 4000 characters.';
+  if (!['feminine', 'custom'].includes(normalized.bot.personaStyle)) {
+    fields['bot.personaStyle'] = 'Choose feminine or custom prompt only.';
+  }
+  if (!['contextual', 'on-request', 'off'].includes(normalized.bot.stickerReplies)) {
+    fields['bot.stickerReplies'] = 'Choose occasional, on request, or off.';
+  }
   if (!['prefix', 'mention-or-reply'].includes(normalized.bot.replyTrigger)) {
     fields['bot.replyTrigger'] = 'Choose command prefix or tags and replies only.';
   }

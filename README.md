@@ -23,6 +23,16 @@ To answer ordinary private messages without commands while keeping groups addres
 
 The server binds to `127.0.0.1` by default. Set `HOST=0.0.0.0` to reach it from your LAN. Use HTTPS when exposing the dashboard beyond your local machine.
 
+## Voice and outgoing stickers
+
+**Bot behavior → Reply style → Feminine & warm** adds a warm, natural feminine voice to your saved instructions. Casual replies can use modest emoji and kaomoji such as `>.<`, `^.^`, and `(｡•ᴗ•｡)`. The assistant follows the user's language and keeps document, technical, and serious answers focused. Choose **Custom prompt only** to use your saved voice without this extra style. Updating an older installation enables the feminine style without replacing its saved system prompt or provider credentials.
+
+**Sticker replies → Occasionally, to suit the chat** lets the model choose one of six original pink-ribbon cat reactions: hello, happy, shy, love, sad, or cheer. They arrive as native WhatsApp stickers alongside the text, quoting the incoming message. Automatic reactions are limited to one per chat every two minutes and are suppressed for file uploads and recognized serious or technical requests. The model is also instructed to avoid reactions in sensitive exchanges. The model can skip a sticker; they are not added to every answer.
+
+You can request one directly, for example **“Kirim stiker lucu dong”** or **“Send me a cute sticker please”**. Direct requests bypass the automatic pause. Choose **Only when requested** or **Off** to reduce or disable stickers. The existing private-chat/group-tag trigger still controls which messages the bot accepts; stickers do not start new conversations or bypass group addressing.
+
+The six transparent WebP files under `assets/stickers/` ship with the source. Keep that directory when uploading the bot. No additional service, API key, or runtime image converter is needed. A failed sticker upload leaves a successfully sent text reply intact; sticker-only replies have a text fallback. Emoji and kaomoji travel as ordinary text. Sticker choice and conversational phrasing depend on the configured model following the runtime instructions.
+
 ## Hosting requirements
 
 Run the bot and dashboard together as one continuously running Node.js process with persistent writable storage. Pterodactyl / Botkeep with a Node.js 24 image supports this deployment model; keep `secrets.env` and the root `storage/` directory across restarts and redeployments.
@@ -165,7 +175,7 @@ All `/api/*` endpoints except the password login require a valid signed session 
 | POST | `/api/bot/restart` | `{ "mode": "restart" }` or `{ "mode": "logout" }`; returns `202`. |
 | POST | `/api/ai/test` | Test the saved provider without adding conversation memory. |
 
-Settings validation returns `400` with a flat `fields` map. Sending `"********"` for an unchanged saved key preserves it. Schema additions to the PRD: `ai.maxImageMB`, `ai.mediaEnabled`, `ai.maxFileMB`, `ai.attachmentTransport`, `bot.replyTrigger`, `bot.maxMessageAgeSeconds`, `bot.markRead`, and `bot.rateLimitPerMinute`.
+Settings validation returns `400` with a flat `fields` map. Sending `"********"` for an unchanged saved key preserves it. Schema additions to the PRD: `ai.maxImageMB`, `ai.mediaEnabled`, `ai.maxFileMB`, `ai.attachmentTransport`, `bot.personaStyle` (`feminine` / `custom`), `bot.stickerReplies` (`contextual` / `on-request` / `off`), `bot.replyTrigger`, `bot.maxMessageAgeSeconds`, `bot.markRead`, and `bot.rateLimitPerMinute`.
 
 Connect to authenticated **`/ws`** with a same-origin `Origin` header. Events are `{ "type": "status" | "qr", "payload": {...} }`. New clients receive the current snapshot and QR; subsequent changes are pushed without polling. WebSocket ping/pong runs every 30 seconds.
 

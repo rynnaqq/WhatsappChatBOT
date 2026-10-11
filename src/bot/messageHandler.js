@@ -1,6 +1,8 @@
 import { jidNormalizedUser } from '@whiskeysockets/baileys';
 
 import { downloadImageMessage, downloadIncomingMedia, MediaUserFacingError } from './mediaService.js';
+import { loadSticker } from './stickerService.js';
+import { isStickerRequest, stickerAllowed, stickerFallback } from '../services/replyPersona.js';
 
 const GENERIC_FAILURE = "Sorry, I couldn't process that request right now.";
 const DEFAULT_IMAGE_PROMPT = 'Describe this image.';
@@ -30,6 +32,7 @@ const DEDUP_TTL_MS = 10 * 60_000;
 const MAX_DEDUP_ENTRIES = 10_000;
 const MAX_CHAT_QUEUES = 1_000;
 const MAX_PENDING_PER_CHAT = 100;
+const STICKER_COOLDOWN_MS = 120_000;
 
 function unwrap(content) {
   let current = content;
@@ -185,6 +188,7 @@ function safeSettings(value = {}) {
     bot: {
       commandPrefix: typeof value.bot?.commandPrefix === 'string' ? value.bot.commandPrefix : '!',
       replyTrigger: value.bot?.replyTrigger === 'mention-or-reply' ? 'mention-or-reply' : 'prefix',
+      stickerReplies: value.bot?.stickerReplies ?? 'contextual',
       privateChatsOnly: value.bot?.privateChatsOnly === true,
       groupRepliesEnabled: value.bot?.groupRepliesEnabled !== false,
       typingIndicator: value.bot?.typingIndicator !== false,
@@ -216,6 +220,7 @@ export function createMessageHandler({
   const pending = new Map();
   const dedup = new Map();
   const rateWindows = new Map();
+  const stickerTimes = new Map();
   let closed = false;
 
   function pruneDedup(currentTime) {
@@ -304,19 +309,52 @@ export function createMessageHandler({
       }
       if (closed || !isActive()) return;
       stage = 'ai_request';
-      const reply = await aiService.reply({
+      const input = {
         chatId,
         text,
         ...(attachment ? { attachment } : {}),
         ...(attachment?.kind === 'image'
           ? { imageBuffer: attachment.buffer, mimeType: attachment.mimeType }
           : {}),
-      });
-      if (!closed && isActive() && typeof reply === 'string' && reply) {
+      };
+      const reply = typeof aiService.replyWithMedia === 'function'
+        ? await aiService.replyWithMedia(input) : await aiService.reply(input);
+      if (closed || !isActive()) return;
+      const replyText = typeof reply === 'string' ? reply : reply?.text;
+      const stickerId = typeof reply === 'object' ? reply?.stickerId : null;
+      let textSent = false;
+      let stickerSent = false;
+      if (typeof replyText === 'string' && replyText.trim()) {
         stage = 'reply_send';
-        await sock.sendMessage(chatId, { text: reply }, { quoted: msg });
+        await sock.sendMessage(chatId, { text: replyText }, { quoted: msg });
+        textSent = true;
       }
-      logger?.info?.({ event: 'message_replied', messageId }, 'Message replied');
+      const lastSticker = stickerTimes.get(chatId);
+      const canSendSticker = stickerId && stickerAllowed(config, { text, attachment })
+        && (isStickerRequest(text) || lastSticker === undefined || now() - lastSticker >= STICKER_COOLDOWN_MS);
+      if (canSendSticker && !closed && isActive()) {
+        stage = 'sticker_send';
+        try {
+          const sticker = await loadSticker(stickerId);
+          if (sticker && !closed && isActive()) {
+            await sock.sendMessage(chatId, { sticker }, { quoted: msg });
+            stickerSent = true;
+            stickerTimes.delete(chatId);
+            stickerTimes.set(chatId, now());
+            if (stickerTimes.size > MAX_CHAT_QUEUES) stickerTimes.delete(firstMapKey(stickerTimes));
+          }
+        } catch {
+          logger?.warn?.({ event: 'sticker_reply_failed', messageId }, 'Sticker reply could not be sent.');
+        }
+      }
+      if (!textSent && !stickerSent && !closed && isActive()) {
+        stage = 'reply_send';
+        await sock.sendMessage(chatId, { text: stickerFallback(stickerId) }, { quoted: msg });
+        textSent = true;
+      }
+      if (textSent || stickerSent) {
+        logger?.info?.({ event: 'message_replied', messageId, stickerSent }, 'Message replied');
+      }
     } catch (error) {
       const reason = userMessage(error);
       const errorCode = error?.code === 'AI_USER_FACING' || error?.code === 'MEDIA_USER_FACING'
@@ -402,6 +440,7 @@ export function createMessageHandler({
     closed = true;
     dedup.clear();
     rateWindows.clear();
+    stickerTimes.clear();
   }
 
   return { handleUpsert, close };

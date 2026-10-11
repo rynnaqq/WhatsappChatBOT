@@ -80,6 +80,10 @@ try {
     await page.getByLabel(/^API key/).fill('fake-browser-provider-key');
     await page.getByLabel('Model name').fill('test-vision-model');
     await page.getByLabel('Command prefix').fill('?');
+    assert.equal(await page.getByLabel('Reply style', { exact: true }).count(), 1);
+    assert.equal(await page.getByLabel('Sticker replies', { exact: true }).count(), 1);
+    await page.getByLabel('Reply style', { exact: true }).selectOption('custom');
+    await page.getByLabel('Sticker replies', { exact: true }).selectOption('on-request');
     await page.getByLabel('Files, audio and video').check();
     await page.getByLabel(/^File size limit/).fill('12');
     await page.getByLabel('Attachment format', { exact: true }).selectOption('9router-gemini');
@@ -89,6 +93,8 @@ try {
     assert.equal(repo.get().ai.mediaEnabled, true);
     assert.equal(repo.get().ai.maxFileMB, 12);
     assert.equal(repo.get().ai.attachmentTransport, '9router-gemini');
+    assert.equal(repo.get().bot.personaStyle, 'custom');
+    assert.equal(repo.get().bot.stickerReplies, 'on-request');
     await page.getByRole('button', { name: 'Test connection', exact: true }).click();
     await page.getByRole('status').filter({ hasText: 'Connection successful' }).waitFor();
     await page.getByLabel(/^Private chats only/).check();
@@ -129,6 +135,13 @@ try {
     assert.equal(await page.getByLabel('Files, audio and video').isChecked(), true);
     assert.equal(await page.getByLabel(/^File size limit/).inputValue(), '12');
     assert.equal(await page.getByLabel('Attachment format', { exact: true }).inputValue(), '9router-gemini');
+    assert.equal(await page.getByLabel('Reply style', { exact: true }).inputValue(), 'custom');
+    assert.equal(await page.getByLabel('Sticker replies', { exact: true }).inputValue(), 'on-request');
+    await page.getByLabel('Reply style', { exact: true }).selectOption('feminine');
+    await page.getByLabel('Sticker replies', { exact: true }).selectOption('contextual');
+    await saveSettings(page);
+    assert.equal(repo.get().bot.personaStyle, 'feminine');
+    assert.equal(repo.get().bot.stickerReplies, 'contextual');
     await page.getByLabel('Files, audio and video').uncheck();
     await saveSettings(page);
     assert.equal(repo.get().ai.mediaEnabled, false);

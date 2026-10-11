@@ -296,3 +296,44 @@ test('invalid media controls are rejected without changing active settings', asy
     assert.equal(repo.get().ai.maxFileMB, 10);
   }
 });
+
+test('older encrypted settings gain persona and sticker defaults without replacing the custom prompt', async (t) => {
+  const { repo, storageDir } = await makeRepo(t);
+  await repo.save(validSettings({ bot: { systemPrompt: 'Keep my document instructions.', replyTrigger: 'mention-or-reply' } }));
+  const file = path.join(storageDir, 'settings.json');
+  const older = JSON.parse(await readFile(file, 'utf8'));
+  delete older.bot.personaStyle;
+  delete older.bot.stickerReplies;
+  const original = JSON.stringify(older);
+  await import('node:fs/promises').then(({ writeFile }) => writeFile(file, original));
+  const restored = new SettingsRepo({ storageDir, encryptionSecret: secret });
+  await restored.init();
+
+  assert.equal(restored.getPublic().bot.personaStyle, 'feminine');
+  assert.equal(restored.getPublic().bot.stickerReplies, 'contextual');
+  assert.equal(restored.get().bot.systemPrompt, 'Keep my document instructions.');
+  assert.equal(restored.get().bot.replyTrigger, 'mention-or-reply');
+  assert.equal(restored.get().ai.apiKey, 'sk-test-secret');
+  assert.equal(await readFile(file, 'utf8'), original);
+});
+
+test('persona and sticker choices persist through masked-key saves and invalid modes leave settings intact', async (t) => {
+  const { repo, storageDir } = await makeRepo(t);
+  await repo.save(validSettings());
+  const payload = repo.getPublic();
+  payload.bot.personaStyle = 'custom';
+  payload.bot.stickerReplies = 'on-request';
+  await repo.save(payload);
+  const restored = new SettingsRepo({ storageDir, encryptionSecret: secret });
+  await restored.init();
+  assert.equal(restored.get().bot.personaStyle, 'custom');
+  assert.equal(restored.get().bot.stickerReplies, 'on-request');
+  assert.equal(restored.get().ai.apiKey, 'sk-test-secret');
+  for (const bot of [{ personaStyle: 'unknown' }, { stickerReplies: 'always' }]) {
+    const bad = restored.getPublic();
+    Object.assign(bad.bot, bot);
+    await assert.rejects(restored.save(bad), error => error instanceof SettingsValidationError);
+    assert.equal(restored.get().bot.personaStyle, 'custom');
+    assert.equal(restored.get().bot.stickerReplies, 'on-request');
+  }
+});

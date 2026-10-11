@@ -1,5 +1,23 @@
 # Verification
 
+## Feminine persona and native reaction stickers — 2026-10-11
+
+The default feminine style is an additional runtime instruction, so existing document instructions and encrypted provider keys remain saved. Operators can choose Custom prompt only, occasional contextual stickers, request-only stickers, or Off in Bot behavior. Optional model controls select one fixed local WebP asset; the application removes the command suffix from text and ordinary memory. This does not add another model request.
+
+| Check | Result |
+| --- | --- |
+| RED/GREEN evidence | Existing code failed the new settings, native-media, cooldown and dashboard-control tests before implementation. Review regressions reproduced leaked blank-separated controls, indented/nested code loss, sticker refusals and informational questions being classified as requests. The sad-only upload-failure test returned a happy fallback before correction. All targeted tests now pass. |
+| Full suite and syntax | `npm test`: 294 passed, zero failures, cancellations or skips. `npm run check`: all 50 JavaScript files passed. `git diff --check` passed. |
+| Real integrated AI path | A controlled local HTTP provider was used with the actual AI service, official client, memory, incoming handler and shipped assets. One completion produced clean emoji/kaomoji text plus quoted native WebP bytes; duplicate upsert dispatch was suppressed. No sticker command appeared in sent text or assistant history. |
+| Delivery controls | Per-chat pause, other-chat independence, direct-request bypass, Off/request-only modes, group addressing, deduplication, attachment suppression and inactive-socket checks passed. Unknown IDs cannot become paths or URLs. A failed sticker upload does not add a generic error after successful text. |
+| Persona/settings migration | Legacy encrypted settings gain defaults without replacing their custom prompt, key or trigger, or rewriting the old file. Explicit modes persist through masked-key saves; invalid modes leave active settings intact. |
+| Asset validation | All six distinct assets decode as transparent 512 × 512 WebP, with actual sizes from 19,348 to 22,950 bytes. Original artwork uses no external fonts; no runtime converter or sticker service is added. The contact sheet was inspected locally. |
+| Dashboard | Integrated browser checks passed at 1440px and 360px, including persona/sticker save and reload, masked-key preservation, provider test, existing session/QR controls and keyboard dialogs. Zero detected axe WCAG AA violations, browser errors or horizontal overflow. |
+| Independent review | No open critical or important findings after parser, context/request classification and shared fallback corrections. Documentation explicitly qualifies recognized serious-context filtering. |
+| Complete source package | A 95-entry ZIP includes all six WebP assets and the new helper, sender, builder and tests, with no runtime secrets or storage. Fresh `npm ci --omit=dev --ignore-scripts` and 235 packaged AI/persona/sticker/document/settings tests passed. The exported CLI served health, login and authenticated settings on its allocated port, loaded legacy persona/sticker defaults and retained the existing custom prompt. Overlay and startup preserved synthetic environment files, encrypted settings and pairing-marker bytes. Only the owned fixture process was started and stopped. |
+
+These checks use synthetic messages and controlled provider/socket boundaries. No live WhatsApp sticker was sent and no remote Pterodactyl process was accessed or restarted. Voice and sticker choice depend on the configured model following instructions. Contextual eligibility recognizes common casual/serious cues; use Only when requested or Off for stricter control. Existing attachment and PDF regression coverage remains included.
+
 ## PDF deadline follows dashboard Timeout — 2026-10-11
 
 The repeated PDF timeout reports show the same fixed worker deadline as the preceding incident; the actual Pterodactyl source revision, resources and PDF are still unconfirmed. Local code inspection found that increasing the dashboard's AI Timeout could not extend the fixed 25-second PDF deadline. The latest operator logs separately show two successful replies, then four AI requests returning HTTP 503, including three transient retries.
