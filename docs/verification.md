@@ -1,5 +1,27 @@
 # Verification
 
+## WhatsApp file download recovery — 2026-10-11
+
+The operator's exact reply was “could not be downloaded”, which comes from media retrieval before any document reader or AI request. A real Baileys client against controlled HTTPS dispatch responses reproduced that error on expired HTTP 404/410 media. The pinned client throws Boom errors with `output.statusCode`, but its built-in refresh checks `error.status`: [download/retry source](https://github.com/WhiskeySockets/Baileys/blob/v7.0.0-rc14/src/Utils/messages.ts), [HTTP error source](https://github.com/WhiskeySockets/Baileys/blob/v7.0.0-rc14/src/Utils/messages-media.ts).
+
+The service now refreshes a trusted expired reference at most once and retries within the same deadline. Both manual and dependency-triggered refresh callbacks refuse to continue after timeout. The file size, trusted-host, MIME/content validation and stream bounds still apply. HTTP 403 and network/decryption failures produce safe diagnostics and a resend instruction.
+
+| Check | Result |
+| --- | --- |
+| Real download regression | Encrypted synthetic PDF with real Baileys and controlled HTTPS 404/410 responses failed before the fallback; both now decrypt to the original bytes after one refresh. |
+| Focused media/handler tests | 65 passed, zero failures. Includes bounded refreshes, late callbacks, download/stream limits, trusted references, group/private triggers and log privacy. |
+| Full suite and syntax | `npm test` on Node 24.20.0: 248 passed, zero failures, cancellations or skips. `npm run check`: all 43 JavaScript files passed. `git diff --check` passed. |
+| Late dependency callback | Reproduced one post-timeout retry before the fix; after the guard, releasing the pending refresh causes zero downstream retries. |
+| Safe diagnostics | Controlled HTTP 403/410, DNS `EAI_AGAIN` and bad decryption report status/code and stage. Raw URLs/tokens, errors, filenames, contents and chat identifiers are absent. |
+| Current live provider | Synthetic scanned PDF, merged DOCX and legacy DOC were recognized through the last-known HTTPS 9Router endpoint. The prior run's HTTP 503 Word limitation did not recur in these checks. |
+| Production AI service | Scanned PDF and merged DOCX were recognized with the existing local settings, changing only the endpoint in memory to the last-known HTTPS address. The local saved endpoint differs from that address; these checks do not establish the remote server's configuration. Saved settings stayed byte-for-byte unchanged. |
+| Independent integration review | Prior late-callback blocker was reproduced, corrected and cleared; no remaining download-bound, refresh-reference or log-privacy findings. |
+| Complete source package | The complete 79-entry ZIP passed a fresh production install, 175 packaged media/handler/document/AI tests and CLI health/login/authenticated-settings checks on its allocated port. Synthetic environment files, encrypted settings and pairing marker stayed byte-for-byte unchanged. |
+
+The first package CLI check did not reach health readiness. A subsequent startup check in that same extracted project succeeded, and a fresh installation of the unchanged ZIP passed all package checks. The first failure's underlying cause was not captured; startup code was not changed. Only owned, isolated fixture processes were started and stopped.
+
+The operator's documents and remote Pterodactyl container were not accessed, so the actual remote download's HTTP/network code remains unknown. New `media_download_failed` logs provide that distinction. Reader code is unchanged in this update. Large scanned PDFs can still reach the existing 25-second parsing limit even when their dimensions are allowed; split such documents before resending.
+
 ## PDF tables, scans, DOCX and legacy DOC — 2026-10-10
 
 Automatic PDF reading now preserves page-labelled Markdown text and, when visual content is detected and Vision is enabled, sends high-detail JPEGs of every page. This prevents a searchable heading or a text-only first page from hiding scanned tables later in the document. The model is asked to verify row/column associations, merged cells, units, and cross-page continuations. Ordinary text PDFs stay text-only; disabling Vision or selecting an explicit native transport preserves the original PDF route.

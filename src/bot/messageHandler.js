@@ -263,16 +263,19 @@ export function createMessageHandler({
     if (closed || !isActive()) return;
     const messageId = msg.key?.id;
     let typingStarted = false;
+    let stage = 'read_receipt';
     try {
       if (config.bot.markRead) await sock.readMessages([msg.key]);
       if (closed || !isActive()) return;
       if (config.bot.typingIndicator) {
+        stage = 'typing';
         await sock.sendPresenceUpdate('composing', chatId);
         typingStarted = true;
         if (closed || !isActive()) return;
       }
       let attachment;
       if (mediaKind) {
+        stage = 'attachment_validation';
         if (usesVisionControls && !config.ai.visionEnabled) {
           throw new MediaUserFacingError('Image messages are disabled.');
         }
@@ -284,6 +287,7 @@ export function createMessageHandler({
           timeoutMs: config.ai.timeoutSeconds * 1000,
           logger,
         };
+        stage = 'attachment_download';
         if (mediaKind === 'image') {
           const media = await downloadImage(sock, msg, options);
           const extensions = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' };
@@ -299,6 +303,7 @@ export function createMessageHandler({
         if (closed || !isActive()) return;
       }
       if (closed || !isActive()) return;
+      stage = 'ai_request';
       const reply = await aiService.reply({
         chatId,
         text,
@@ -308,13 +313,17 @@ export function createMessageHandler({
           : {}),
       });
       if (!closed && isActive() && typeof reply === 'string' && reply) {
+        stage = 'reply_send';
         await sock.sendMessage(chatId, { text: reply }, { quoted: msg });
       }
       logger?.info?.({ event: 'message_replied', messageId }, 'Message replied');
     } catch (error) {
-      logger?.warn?.({ event: 'message_failed', messageId }, 'Message processing failed');
+      const reason = userMessage(error);
+      const errorCode = error?.code === 'AI_USER_FACING' || error?.code === 'MEDIA_USER_FACING'
+        ? error.code : 'INTERNAL_FAILURE';
+      logger?.warn?.({ event: 'message_failed', messageId, stage, errorCode, reason }, 'Message processing failed');
       if (!closed && isActive()) {
-        await sock.sendMessage(chatId, { text: userMessage(error) }, { quoted: msg }).catch(() => {});
+        await sock.sendMessage(chatId, { text: reason }, { quoted: msg }).catch(() => {});
       }
     } finally {
       if (typingStarted && !closed && isActive()) {

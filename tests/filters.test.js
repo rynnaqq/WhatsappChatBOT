@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { createMessageHandler } from '../src/bot/messageHandler.js';
+import { MediaUserFacingError } from '../src/bot/mediaService.js';
+import { UserFacingError } from '../src/services/aiService.js';
 
 const logger = { debug() {}, info() {}, warn() {}, error() {} };
 
@@ -66,6 +68,54 @@ function harness(overrides = {}) {
   });
   return { handler, calls };
 }
+
+test('document failure logs distinguish download from AI processing and retain the safe public reason', async () => {
+  for (const item of [
+    { stage: 'attachment_download', code: 'MEDIA_USER_FACING', error: new MediaUserFacingError('This file could not be downloaded.') },
+    { stage: 'ai_request', code: 'AI_USER_FACING', error: new UserFacingError('The PDF took too long to process.') },
+  ]) {
+    const warnings = [];
+    const { handler } = harness({
+      logger: { warn: fields => warnings.push(fields) },
+      downloadMedia: async () => {
+        if (item.stage === 'attachment_download') throw item.error;
+        return { kind: 'document', fileName: 'synthetic.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-') };
+      },
+      aiService: { async reply() { throw item.error; } },
+    });
+    const sock = socket();
+    try {
+      await handler.handleUpsert(sock, { type: 'notify', messages: [message('failed-document', '', {
+        payload: { documentMessage: { caption: 'Read this document', fileName: 'synthetic.pdf', mimetype: 'application/pdf' } },
+      })] });
+      assert.equal(warnings.length, 1);
+      assert.equal(warnings[0].event, 'message_failed');
+      assert.equal(warnings[0].stage, item.stage);
+      assert.equal(warnings[0].errorCode, item.code);
+      assert.equal(warnings[0].reason, item.error.message);
+      assert.equal(sock.sent[0].content.text, item.error.message);
+    } finally { handler.close(); }
+  }
+});
+
+test('unexpected reply-delivery failures log the stage without exposing raw errors or private metadata', async () => {
+  const warnings = [];
+  const sentinel = 'synthetic-secret-provider-body-and-private-path';
+  const { handler } = harness({ logger: { warn: fields => warnings.push(fields) } });
+  const sock = socket({ async sendMessage() { throw new Error(sentinel); } });
+  try {
+    await handler.handleUpsert(sock, { type: 'notify', messages: [message('reply-failed', 'private-message-content')] });
+    assert.equal(warnings.length, 1);
+    assert.equal(warnings[0].stage, 'reply_send');
+    assert.equal(warnings[0].errorCode, 'INTERNAL_FAILURE');
+    assert.equal(typeof warnings[0].reason, 'string');
+    assert.ok(warnings[0].reason.length > 0 && warnings[0].reason.length <= 500);
+    const output = JSON.stringify(warnings);
+    assert.equal(output.includes(sentinel), false);
+    assert.equal(output.includes('private-message-content'), false);
+    assert.equal(output.includes('person@s.whatsapp.net'), false);
+  } finally { handler.close(); }
+});
 
 test('notify upserts process every eligible message and quote each original', async () => {
   const { handler, calls } = harness();

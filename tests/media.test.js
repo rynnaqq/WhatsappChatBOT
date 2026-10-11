@@ -1,9 +1,197 @@
 import assert from 'node:assert/strict';
+import { createCipheriv, createHmac } from 'node:crypto';
 import test from 'node:test';
+import { getMediaKeys } from '@whiskeysockets/baileys';
+import { MockAgent } from 'undici';
 
 import { downloadImageMessage, downloadIncomingMedia, MediaUserFacingError } from '../src/bot/mediaService.js';
 
 const logger = { debug() {}, info() {}, warn() {}, error() {}, child() { return this; } };
+
+async function encryptedDocument(t) {
+  const bytes = Buffer.from('%PDF-1.7\nsynthetic document');
+  const mediaKey = Buffer.alloc(32, 7);
+  const { cipherKey, iv, macKey } = await getMediaKeys(mediaKey, 'document');
+  const cipher = createCipheriv('aes-256-cbc', cipherKey, iv);
+  const encrypted = Buffer.concat([cipher.update(bytes), cipher.final()]);
+  const mac = createHmac('sha256', macKey).update(iv).update(encrypted).digest().subarray(0, 10);
+  const body = Buffer.concat([encrypted, mac]);
+  const agent = new MockAgent();
+  agent.disableNetConnect();
+  let closing;
+  const close = () => closing ??= agent.close();
+  t.after(close);
+  const dispatcher = { dispatch: agent.dispatch.bind(agent), destroy: close };
+  const pool = agent.get('https://mmg.whatsapp.net');
+  const msg = {
+    key: { id: 'synthetic-document', remoteJid: 'person@s.whatsapp.net', fromMe: false },
+    message: { documentMessage: {
+      url: 'https://mmg.whatsapp.net/expired.enc?token=synthetic-private',
+      directPath: '/expired.enc?token=synthetic-private',
+      mediaKey, fileLength: bytes.length, mimetype: 'application/pdf', fileName: 'synthetic.pdf',
+    } },
+  };
+  return { bytes, body, agent, dispatcher, pool, msg };
+}
+
+for (const status of [404, 410]) {
+  test(`real Baileys refreshes an expired HTTP ${status} document before downloading it`, async t => {
+    const h = await encryptedDocument(t);
+    h.pool.intercept({ path: '/expired.enc?token=synthetic-private', method: 'GET' }).reply(status, 'expired');
+    h.pool.intercept({ path: '/refreshed.enc', method: 'GET' }).reply(200, h.body);
+    let refreshes = 0;
+    const sock = {
+      async updateMediaMessage(stale) {
+        refreshes += 1;
+        return { ...stale, message: { documentMessage: {
+          ...stale.message.documentMessage,
+          url: 'https://mmg.whatsapp.net/refreshed.enc', directPath: '/refreshed.enc',
+        } } };
+      },
+    };
+
+    const result = await downloadIncomingMedia(h.msg, sock, {
+      maxBytes: 1_000, logger, dispatcherFactory: () => h.dispatcher,
+    });
+
+    assert.deepEqual(result.buffer, h.bytes);
+    assert.equal(result.mimeType, 'application/pdf');
+    assert.equal(refreshes, 1);
+    h.agent.assertNoPendingInterceptors();
+  });
+}
+
+test('terminal HTTP, network and decryption failures expose safe download diagnostics', async t => {
+  for (const fixture of [
+    { status: 403, errorCode: 'HTTP_ERROR', phase: 'download', refreshes: 0 },
+    { status: 410, errorCode: 'HTTP_ERROR', phase: 'download', refreshes: 1 },
+    { networkCode: 'EAI_AGAIN', status: null, errorCode: 'EAI_AGAIN', phase: 'download', refreshes: 0 },
+    { decryption: true, status: null, errorCode: 'DECRYPTION_FAILED', phase: 'stream', refreshes: 0 },
+  ]) {
+    await t.test(fixture.errorCode + '-' + fixture.status, async child => {
+      const h = await encryptedDocument(child);
+      const warnings = [];
+      const entry = h.pool.intercept({ path: '/expired.enc?token=synthetic-private', method: 'GET' });
+      if (fixture.networkCode) {
+        entry.replyWithError(Object.assign(new Error('synthetic-private network detail'), { code: fixture.networkCode }));
+      } else if (fixture.decryption) {
+        entry.reply(200, Buffer.alloc(32));
+      } else {
+        entry.reply(fixture.status, 'synthetic-private HTTP body');
+      }
+      if (fixture.refreshes) h.pool.intercept({ path: '/refreshed.enc', method: 'GET' }).reply(410, 'expired again');
+      let refreshes = 0;
+      const sock = {
+        async updateMediaMessage(stale) {
+          refreshes += 1;
+          return { ...stale, message: { documentMessage: {
+            ...stale.message.documentMessage,
+            url: 'https://mmg.whatsapp.net/refreshed.enc', directPath: '/refreshed.enc',
+          } } };
+        },
+      };
+
+      await assert.rejects(downloadIncomingMedia(h.msg, sock, {
+        maxBytes: 1_000, dispatcherFactory: () => h.dispatcher,
+        logger: { warn: value => warnings.push(value) },
+      }), error => error instanceof MediaUserFacingError && /send|resend/i.test(error.message));
+
+      const diagnostic = warnings.find(value => value.event === 'media_download_failed');
+      assert.ok(diagnostic);
+      assert.equal(diagnostic.status, fixture.status);
+      assert.equal(diagnostic.errorCode, fixture.errorCode);
+      assert.equal(diagnostic.phase, fixture.phase);
+      assert.equal(diagnostic.mediaKind, 'document');
+      assert.equal(refreshes, fixture.refreshes);
+      const serialized = JSON.stringify(warnings);
+      assert.equal(serialized.includes('synthetic-private'), false);
+      assert.equal(serialized.includes('person@s.whatsapp.net'), false);
+      assert.equal(serialized.includes('synthetic.pdf'), false);
+      assert.equal(serialized.includes(h.bytes.toString()), false);
+      h.agent.assertNoPendingInterceptors();
+    });
+  }
+});
+
+test('dependency reupload callbacks cannot refresh the same download twice', async () => {
+  const bytes = Buffer.from('%PDF-1.7\nfixture');
+  const msg = incomingMediaMessage({ messageKey: 'documentMessage', mimeType: 'application/pdf', bytes });
+  let refreshes = 0;
+  msg.updateMediaMessage = async stale => { refreshes += 1; return stale; };
+  msg.downloadMediaMessage = async (_message, _type, _options, context) => {
+    await context.reuploadRequest(msg);
+    await context.reuploadRequest(msg);
+    return (async function* stream() { yield bytes; }());
+  };
+
+  await assert.rejects(downloadIncomingMedia(msg, msg, { maxBytes: 1_000, logger }),
+    error => error instanceof MediaUserFacingError && /send|resend/i.test(error.message));
+  assert.equal(refreshes, 1);
+});
+
+test('a media refresh shares the original deadline and cannot dispatch a late retry', async t => {
+  const h = await encryptedDocument(t);
+  h.pool.intercept({ path: '/expired.enc?token=synthetic-private', method: 'GET' }).reply(410, 'expired');
+  const warnings = [];
+  let release;
+  let started;
+  const refreshStarted = new Promise(resolve => { started = resolve; });
+  const sock = {
+    async updateMediaMessage(stale) {
+      started();
+      await new Promise(resolve => { release = resolve; });
+      return { ...stale, message: { documentMessage: {
+        ...stale.message.documentMessage,
+        url: 'https://mmg.whatsapp.net/refreshed.enc', directPath: '/refreshed.enc',
+      } } };
+    },
+  };
+  let dispatches = 0;
+  const dispatcher = {
+    dispatch(...args) { dispatches += 1; return h.dispatcher.dispatch(...args); },
+    destroy: h.dispatcher.destroy,
+  };
+  t.after(() => release?.());
+  const operation = downloadIncomingMedia(h.msg, sock, {
+    timeoutMs: 100, maxBytes: 1_000, dispatcherFactory: () => dispatcher,
+    logger: { warn: value => warnings.push(value) },
+  });
+  const rejection = assert.rejects(operation, error => error instanceof MediaUserFacingError && /timed out/i.test(error.message));
+  await refreshStarted;
+  await rejection;
+  release();
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(dispatches, 1);
+  const diagnostic = warnings.find(value => value.event === 'media_download_failed');
+  assert.equal(diagnostic.phase, 'reupload');
+  assert.equal(diagnostic.errorCode, 'MEDIA_DOWNLOAD_TIMEOUT');
+  assert.equal(diagnostic.reuploadAttempted, true);
+  h.agent.assertNoPendingInterceptors();
+});
+
+test('a dependency-triggered refresh cannot continue after its download times out', async t => {
+  const bytes = Buffer.from('%PDF-1.7\nfixture');
+  const msg = incomingMediaMessage({ messageKey: 'documentMessage', mimeType: 'application/pdf', bytes });
+  let release;
+  let retries = 0;
+  msg.updateMediaMessage = async stale => {
+    await new Promise(resolve => { release = resolve; });
+    return stale;
+  };
+  msg.downloadMediaMessage = async (_message, _type, _options, context) => {
+    await context.reuploadRequest(msg);
+    retries += 1;
+    return (async function* stream() { yield bytes; }());
+  };
+  t.after(() => release?.());
+
+  await assert.rejects(downloadIncomingMedia(msg, msg, { maxBytes: 1_000, timeoutMs: 20, logger }),
+    error => error instanceof MediaUserFacingError && /timed out/i.test(error.message));
+  release();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(retries, 0);
+});
 
 function imageMessage({
   mimeType = 'image/png',

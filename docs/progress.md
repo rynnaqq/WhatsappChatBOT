@@ -1,5 +1,16 @@
 # Implementation progress
 
+## WhatsApp file download recovery — 2026-10-11
+
+- The operator's exact “could not be downloaded” reply localized the failure to WhatsApp media retrieval, before document parsing or model requests. Controlled encrypted-media tests reproduced that reply for HTTP 404/410 with the real pinned Baileys client.
+- Baileys rc14's HTTP errors expose `output.statusCode`, while its built-in refresh checks `status`. Added a validated, one-refresh fallback for expired links; other HTTP failures are not retried. Refresh, acquisition and stream consumption share one deadline, including late dependency callbacks.
+- Added safe download status/network/decryption diagnostics and processing-stage/public-reason logs. Raw errors, media URLs, keys, filenames, file contents and private chat text remain excluded. Unavailable files receive a resend instruction.
+- Focused media and incoming-handler tests passed 65/65. The late dependency-refresh regression failed with one downstream retry before the post-await deadline guard, then passed with zero retries. Independent integration review cleared that fix.
+- Fresh full verification passed 248/248 tests on Node 24.20.0 and all 43 JavaScript syntax checks; the diff check passed.
+- Current synthetic live 9Router checks recognized scanned PDF table values, merged DOCX table values and legacy DOC text. Production AI-service checks also recognized the scanned PDF and DOCX using existing local settings with only the last-known HTTPS endpoint substituted in memory; saved settings stayed byte-for-byte unchanged.
+- The remote Pterodactyl HTTP/network failure code is still unconfirmed. This release repairs the reproduced expired-link bug and exposes the underlying cause if a deployed download still fails. The operator's running bot, pairing and private documents were not accessed or restarted.
+- A complete 79-entry source ZIP passed a fresh production install, 175 packaged media/handler/document/AI tests and exported CLI health/login/authenticated-settings checks on its allocated port. Overlay and startup preserved synthetic `secrets.env`, legacy `.env`, encrypted settings and pairing-marker bytes.
+
 ## PDF tables/scans, DOCX and DOC support — 2026-10-10
 
 - Automatic PDF reading combines page-labelled Markdown with high-detail images of every page whenever tables, scans, images, sparse text or column gaps need visual verification. Mixed documents no longer lose scanned pages because another page or heading has searchable text. Simple text PDFs stay text-only; existing native transports remain available.

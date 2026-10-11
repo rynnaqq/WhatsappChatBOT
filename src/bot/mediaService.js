@@ -37,6 +37,11 @@ const EXECUTABLE_MIME = new Set([
 const noop = () => {};
 const UNSAFE_URL_TEXT = /[\\\u0000-\u001f\u007f]/;
 const CONTROL_TEXT = /[\u0000-\u001f\u007f]/g;
+const NETWORK_ERROR_CODES = new Set([
+  'ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EHOSTUNREACH', 'ENETUNREACH',
+  'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT', 'UND_ERR_SOCKET',
+  'CERT_HAS_EXPIRED', 'DEPTH_ZERO_SELF_SIGNED_CERT', 'ERR_TLS_CERT_ALTNAME_INVALID',
+]);
 
 export class MediaUserFacingError extends Error {
   constructor(message) {
@@ -247,6 +252,30 @@ function untrustedMediaError(kind = 'image') {
   return new MediaUserFacingError(`This ${mediaLabel(kind)} is not hosted by a trusted WhatsApp media service.`);
 }
 
+function httpStatus(error) {
+  const value = error?.output?.statusCode ?? error?.status ?? error?.statusCode;
+  return Number.isInteger(value) && value >= 100 && value <= 599 ? value : null;
+}
+
+function downloadErrorCode(error, timedOut) {
+  if (timedOut) return 'MEDIA_DOWNLOAD_TIMEOUT';
+  if (error?.code === 'MEDIA_USER_FACING') return 'MEDIA_USER_FACING';
+  if (httpStatus(error) !== null) return 'HTTP_ERROR';
+  let current = error;
+  for (let depth = 0; current && depth < 3; depth += 1) {
+    if (NETWORK_ERROR_CODES.has(current.code)) return current.code;
+    if (current.code === 'ERR_OSSL_BAD_DECRYPT' || current.code === 'ERR_OSSL_WRONG_FINAL_BLOCK_LENGTH') {
+      return 'DECRYPTION_FAILED';
+    }
+    current = current.cause;
+  }
+  return 'DOWNLOAD_FAILED';
+}
+
+function expiredMediaError(kind) {
+  return new MediaUserFacingError(`This ${mediaLabel(kind)} is no longer available on WhatsApp. Please send it again.`);
+}
+
 function validateTrustedURL(value, kind) {
   if (typeof value !== 'string' || value === '' || UNSAFE_URL_TEXT.test(value)) throw untrustedMediaError(kind);
   let url;
@@ -370,6 +399,8 @@ async function downloadSelectedMedia(sock, msg, selected, options = {}) {
   let stream;
   let iterator;
   let timedOut = false;
+  let reuploadAttempted = false;
+  let phase = 'download';
   const controller = new AbortController();
   const dispatcher = typeof options.dispatcherFactory === 'function'
     ? options.dispatcherFactory() : new ValidatingMediaDispatcher();
@@ -385,23 +416,42 @@ async function downloadSelectedMedia(sock, msg, selected, options = {}) {
     }, timeout);
   });
   const beforeDeadline = (operation) => Promise.race([operation, timeoutPromise]);
+  const downloadOptions = { options: { signal: controller.signal, dispatcher } };
+  const context = {
+    logger: silentLogger(options.logger),
+    reuploadRequest: async (staleMessage) => {
+      if (timedOut) throw timeoutError;
+      if (reuploadAttempted) throw expiredMediaError(selected.kind);
+      reuploadAttempted = true;
+      phase = 'reupload';
+      if (typeof sock?.updateMediaMessage !== 'function') throw new Error('Media reupload is unavailable');
+      const updatedMessage = await sock.updateMediaMessage(staleMessage);
+      if (timedOut) throw timeoutError;
+      validateMediaReference(updatedMessage, selected.key, selected.kind);
+      phase = 'download';
+      return updatedMessage;
+    },
+  };
   try {
-    const downloadPromise = Promise.resolve(download(msg, 'stream', {
-      options: { signal: controller.signal, dispatcher },
-    }, {
-      logger: silentLogger(options.logger),
-      reuploadRequest: async (staleMessage) => {
-        if (typeof sock?.updateMediaMessage !== 'function') throw new Error('Media reupload is unavailable');
-        const updatedMessage = await sock.updateMediaMessage(staleMessage);
-        validateMediaReference(updatedMessage, selected.key, selected.kind);
-        return updatedMessage;
-      },
-    })).then((candidate) => {
+    const acquireStream = async () => {
+      try {
+        return await download(msg, 'stream', downloadOptions, context);
+      } catch (error) {
+        // Baileys rc14 checks error.status, but its HTTP errors carry output.statusCode.
+        if (timedOut || reuploadAttempted || ![404, 410].includes(httpStatus(error))
+          || typeof sock?.updateMediaMessage !== 'function') throw error;
+        const updatedMessage = await context.reuploadRequest(msg);
+        if (timedOut) throw timeoutError;
+        return download(updatedMessage, 'stream', downloadOptions, context);
+      }
+    };
+    const downloadPromise = acquireStream().then((candidate) => {
       if (timedOut) candidate?.destroy?.();
       return candidate;
     });
     stream = await beforeDeadline(downloadPromise);
     if (!stream?.[Symbol.asyncIterator]) throw new Error('Media download did not return a stream');
+    phase = 'stream';
     iterator = stream[Symbol.asyncIterator]();
     const chunks = [];
     let size = 0;
@@ -417,6 +467,7 @@ async function downloadSelectedMedia(sock, msg, selected, options = {}) {
       chunks.push(chunk);
     }
     const buffer = Buffer.concat(chunks, size);
+    phase = 'content_validation';
     const mimeType = validateContent(selected, buffer);
     return {
       kind: selected.kind,
@@ -425,9 +476,15 @@ async function downloadSelectedMedia(sock, msg, selected, options = {}) {
       fileName: sanitizeFileName(selected.media.fileName, selected.kind, mimeType),
     };
   } catch (error) {
+    const status = httpStatus(error);
+    options.logger?.warn?.({
+      event: 'media_download_failed', mediaKind: selected.kind, phase, status,
+      errorCode: downloadErrorCode(error, timedOut), reuploadAttempted,
+    }, 'WhatsApp media download failed');
     if (error?.code === 'MEDIA_USER_FACING') throw error;
     if (timedOut) throw timeoutError;
-    throw new MediaUserFacingError(`This ${mediaLabel(selected.kind)} could not be downloaded.`);
+    if ([404, 410].includes(status)) throw expiredMediaError(selected.kind);
+    throw new MediaUserFacingError(`This ${mediaLabel(selected.kind)} could not be downloaded from WhatsApp. Please send it again.`);
   } finally {
     clearTimeout(timer);
     if (timedOut) {

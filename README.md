@@ -78,6 +78,8 @@ The default persona uses natural WhatsApp conversation, matches the user's langu
 
 Send an attachment in a private chat, optionally with a question in its caption. Without a caption, the bot describes images/videos, transcribes audio, or summarizes documents. In groups, send it with a bot mention or as a reply to the bot; ordinary group attachments do not trigger downloads or AI requests.
 
+Expired WhatsApp media links returning HTTP 404/410 are refreshed once before retrying the download, within the original download deadline. If the file is still unavailable, send it again as a new attachment selected from your device. A “could not be downloaded” reply means the file has not reached document parsing or the AI provider. The console's `media_download_failed` event reports a safe HTTP status or network/decryption code; `message_failed` includes the processing stage and the public reply. These diagnostics omit media URLs, keys, filenames, file contents and raw errors.
+
 | Attachment | Processing |
 | --- | --- |
 | Images and WhatsApp stickers | Sent to the model as an image; vision must be enabled. |
@@ -135,7 +137,7 @@ Primary references: [OpenRouter](https://openrouter.ai/openai/gpt-4o-mini/provid
 - `storage/settings.json` is written atomically through a serialized queue. The provider key is encrypted with AES-256-GCM; API responses expose only a fixed mask. Invalid settings are backed up before defaults are used. Runtime files, `secrets.env`, legacy `.env`, logs, and test screenshots are Git-ignored.
 - WhatsApp authentication lives in `storage/auth_info`. Back up this directory and `secrets.env` privately. Directory/file permissions are restricted on platforms supporting POSIX modes; use equivalent private ACLs on Windows.
 - Conversation memory stays in RAM and holds only text. Attachment input history stores a metadata placeholder plus its caption. A separate bounded RAM-only context keeps the latest file available for follow-up questions as described above. Both clear on process restart or account logout; abandoned old-account work cannot restore them.
-- Application logs contain events and message IDs, with no message bodies or provider credentials. Baileys' internal logger is silent. Incoming content and current conversation history are sent to the configured AI provider.
+- Application logs contain events, message IDs, processing stages, safe status/error codes and public failure replies, with no message bodies or provider credentials. Baileys' internal logger is silent. Incoming content and current conversation history are sent to the configured AI provider.
 - Media downloads accept only HTTPS hosts under `whatsapp.net`; redirects are rejected and reupload results are validated. Downloads are bounded by declared and actual byte count and deadline; their private network dispatcher is destroyed when finished or timed out.
 
 Keep `SESSION_SECRET` stable across reboots. Changing it invalidates sessions and prevents decryption of a previously saved API key; the old encrypted file is backed up and the provider key must be entered again.
