@@ -60,6 +60,16 @@ test('accepted casual replies send text plus a quoted native WebP sticker withou
   }
 });
 
+test('expanded reactions can be delivered as quoted native stickers', async () => {
+  for (const stickerId of ['celebrate', 'thinking', 'hug', 'goodnight']) {
+    const h = harness({ stickerId });
+    const msg = await h.message(`expanded-${stickerId}`, 'Kirim stiker lucu dong');
+    assert.equal(h.sent.length, 2, stickerId);
+    assert.ok(Buffer.isBuffer(h.sent[1].content.sticker), stickerId);
+    assert.equal(h.sent[1].options.quoted, msg);
+  }
+});
+
 test('contextual stickers have a per-chat cooldown while ordinary replies and explicit requests continue', async () => {
   const h = harness();
   await h.message('first');
@@ -149,8 +159,15 @@ test('a disconnected socket cannot send a sticker after its text response comple
 test('all built-in sticker assets decode as distinct transparent 512px WebP under 100 KB', async () => {
   const { loadSticker } = await import('../src/bot/stickerService.js');
   const hashes = new Set();
-  for (const id of ['hello', 'happy', 'shy', 'love', 'sad', 'cheer']) {
+  const ids = [
+    'hello', 'happy', 'shy', 'love', 'sad', 'cheer',
+    'laugh', 'wink', 'hug', 'thanks', 'sorry', 'thinking',
+    'confused', 'surprised', 'sleepy', 'goodnight', 'coffee', 'hungry',
+    'celebrate', 'yes', 'no', 'waiting', 'angry', 'bye',
+  ];
+  for (const id of ids) {
     const buffer = await loadSticker(id);
+    assert.ok(Buffer.isBuffer(buffer), `Missing reaction asset: ${id}`);
     assert.ok(buffer.length < 100_000);
     assert.equal(buffer.toString('ascii', 8, 12), 'WEBP');
     hashes.add(createHash('sha256').update(buffer).digest('hex'));
@@ -163,7 +180,7 @@ test('all built-in sticker assets decode as distinct transparent 512px WebP unde
     assert.equal(ctx.getImageData(0, 0, 1, 1).data[3], 0);
     assert.ok(ctx.getImageData(256, 256, 1, 1).data[3] > 0);
   }
-  assert.equal(hashes.size, 6);
+  assert.equal(hashes.size, 24);
   assert.equal(await loadSticker('../secrets.env'), null);
 });
 

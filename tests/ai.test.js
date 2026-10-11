@@ -118,8 +118,12 @@ test('replyWithMedia returns one safe sticker choice while memory keeps only use
   ]);
 });
 
-test('legacy reply returns readable text for a valid sticker-only answer without making a second provider call', async (t) => {
-  const provider = await startProvider(t, ({ response }) => sendJson(response, 200, completion('[[sticker:shy]]')));
+test('replyWithMedia accepts an expanded reaction in one provider call and keeps controls out of memory', async (t) => {
+  const provider = await startProvider(t, ({ response }) => sendJson(
+    response,
+    200,
+    completion('Aku pikirin sebentar ya 🤔\n[[sticker:thinking]]'),
+  ));
   const memory = new MemoryService();
   const service = new AIService({
     settingsRepo: fakeRepo(settings({
@@ -129,16 +133,38 @@ test('legacy reply returns readable text for a valid sticker-only answer without
     memory,
   });
 
-  const answer = await service.reply({ chatId: 'chat', text: 'Kamu lucu deh >.<' });
+  const result = await service.replyWithMedia({ chatId: 'chat', text: 'Hai, lagi mikirin apa?' });
 
-  assert.ok(answer.length > 0);
-  assert.equal(answer.includes('[[sticker:'), false);
+  assert.deepEqual(result, { text: 'Aku pikirin sebentar ya 🤔', stickerId: 'thinking' });
   assert.equal(provider.requests.length, 1);
   assert.equal(JSON.stringify(memory.get('chat', 3)).includes('[[sticker:'), false);
+  assert.deepEqual(memory.get('chat', 3).at(-1), {
+    role: 'assistant',
+    content: 'Aku pikirin sebentar ya 🤔',
+  });
+});
+
+test('legacy reply uses the expanded sticker fallback for a sticker-only answer in one provider call', async (t) => {
+  const provider = await startProvider(t, ({ response }) => sendJson(response, 200, completion('[[sticker:celebrate]]')));
+  const memory = new MemoryService();
+  const service = new AIService({
+    settingsRepo: fakeRepo(settings({
+      ai: { baseURL: provider.baseURL },
+      bot: { personaStyle: 'feminine', stickerReplies: 'contextual' },
+    })),
+    memory,
+  });
+
+  const answer = await service.reply({ chatId: 'chat', text: 'Aku senang banget, akhirnya berhasil!' });
+
+  assert.equal(answer, 'Yay! 🎉');
+  assert.equal(answer.includes('[[sticker:'), false);
+  assert.equal(provider.requests.length, 1);
+  assert.deepEqual(memory.get('chat', 3).at(-1), { role: 'assistant', content: 'Yay! 🎉' });
 });
 
 test('disabled sticker replies strip a trailing provider control marker without selecting media', async (t) => {
-  const provider = await startProvider(t, ({ response }) => sendJson(response, 200, completion('Plain answer.\n[[sticker:love]]')));
+  const provider = await startProvider(t, ({ response }) => sendJson(response, 200, completion('Plain answer.\n[[sticker:thinking]]')));
   const service = new AIService({
     settingsRepo: fakeRepo(settings({ ai: { baseURL: provider.baseURL } })),
     memory: new MemoryService(),

@@ -1,31 +1,37 @@
-export const STICKER_IDS = Object.freeze(['hello', 'happy', 'shy', 'love', 'sad', 'cheer']);
+import {
+  EXPRESSION_GROUPS,
+  STICKER_CATALOG,
+  STICKER_IDS,
+  stickerFallback,
+} from './expressionCatalog.js';
 
-export function stickerFallback(stickerId) {
-  return {
-    hello: 'Hai! 👋',
-    happy: 'Senang banget! 😊',
-    shy: '>.<',
-    love: '💗',
-    sad: '😢',
-    cheer: 'Semangat! ✨',
-  }[stickerId] ?? '😊';
-}
+export { STICKER_IDS, stickerFallback };
 
 const STICKER_ID_SET = new Set(STICKER_IDS);
 const STICKER_CONTROL_LINE = /^\s*\[\[sticker:([^\]\r\n]{0,128})\]\]\s*$/i;
 const MALFORMED_STICKER_CONTROL_LINE = /^\s*\[\[sticker:\s*[a-z0-9_./-]{0,128}\s*\]?\]?\s*$/i;
 
+const EXPRESSION_GUIDE = EXPRESSION_GROUPS.map(({ label, emojis, kaomoji }) => (
+  `${label}: emoji ${emojis.join(' ')}; kaomoji ${kaomoji.join(' ')}`
+)).join(' | ');
+
 const FEMININE_STYLE = [
   'Use a warm, feminine, and natural conversational voice while staying focused on the user\'s request.',
-  'When the user writes casual Indonesian, reply in relaxed Indonesian. In light conversation, you may use a modest emoji or kaomoji such as >.<, ^.^, or (｡•ᴗ•｡), but do not add one to every sentence.',
+  'Respect the user\'s language. When the user writes casual Indonesian, reply in relaxed Indonesian.',
+  'For casual messages, choose one to three context-relevant expressions from the mood guide when they fit. Mix emoji and kaomoji naturally, vary choices across recent conversation history, and avoid repeating the same default expression.',
+  'Expressions are optional: never pile them up, force one into every sentence, or let them replace a useful answer.',
+  `Mood guide — ${EXPRESSION_GUIDE}.`,
   'For casual Indonesian, use gentle, supportive aku/kamu phrasing when it fits. A short line such as “Haii, aku di sini ya 🌸” is inspiration for the tone, not a canned or mandatory greeting.',
-  'Keep serious, technical, and document answers clear and useful. Do not force flirting, stereotypes, romance, or a fake human identity or relationship.',
+  'Keep serious, technical, sensitive, error, and document answers clear and useful, with restrained expressions.',
+  'Do not force flirting, stereotypes, romance, or a fake human identity or relationship.',
   'Never claim you used tools, read files, or performed actions unless that actually happened.',
 ].join(' ');
 
+const STICKER_CHOICES = STICKER_CATALOG.map(({ id, label }) => `${label} [[sticker:${id}]]`).join('; ');
+
 const STICKER_PROTOCOL = [
   'You may optionally choose one WhatsApp reaction sticker only when it naturally fits this casual exchange.',
-  'Available sticker controls are [[sticker:hello]], [[sticker:happy]], [[sticker:shy]], [[sticker:love]], [[sticker:sad]], and [[sticker:cheer]].',
+  `Choose by mood from these available sticker controls: ${STICKER_CHOICES}.`,
   'If you choose one, put exactly one control on its own final line after the user-visible reply. Never place a control in prose or a code block.',
   'Do not claim in the user-visible reply that a sticker was sent; the application sends it only when a valid final control is present.',
   'A sticker is optional. Avoid it for serious, document, technical, error, or sensitive answers unless the user explicitly asks for a sticker.',

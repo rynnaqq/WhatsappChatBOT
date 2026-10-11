@@ -6,6 +6,7 @@ import {
   buildReplySystemPrompt,
   isStickerRequest,
   parseReply,
+  stickerFallback,
   stickerAllowed,
 } from '../src/services/replyPersona.js';
 
@@ -13,6 +14,22 @@ test('parseReply removes one allowed trailing control line from visible text', (
   assert.deepEqual(parseReply('Hai! 😊\n[[sticker:hello]]'), { text: 'Hai! 😊', stickerId: 'hello' });
   assert.deepEqual(parseReply('[[sticker:cheer]]'), { text: '', stickerId: 'cheer' });
   assert.equal(Object.isFrozen(STICKER_IDS), true);
+});
+
+test('parseReply accepts broader reaction moods while removing their controls from visible text', () => {
+  assert.deepEqual(parseReply('Aku pikirin dulu ya 🤔\n[[sticker:thinking]]'), {
+    text: 'Aku pikirin dulu ya 🤔',
+    stickerId: 'thinking',
+  });
+  assert.deepEqual(parseReply('Yay, berhasil! 🎉\n[[sticker:celebrate]]'), {
+    text: 'Yay, berhasil! 🎉',
+    stickerId: 'celebrate',
+  });
+});
+
+test('stickerFallback distinguishes a supported expanded mood from unsafe property names', () => {
+  assert.notEqual(stickerFallback('thinking'), stickerFallback('__unknown__'));
+  assert.equal(stickerFallback('toString'), stickerFallback('__unknown__'));
 });
 
 test('parseReply removes unknown trailing sticker controls without allowing a sticker', () => {
@@ -158,4 +175,19 @@ test('buildReplySystemPrompt preserves explicit custom-off mode and enables prot
   const documentPrompt = buildReplySystemPrompt(legacy, { text: 'Read this.', attachment: { kind: 'document' } });
   assert.match(documentPrompt, />\.</);
   assert.equal(documentPrompt.includes('[[sticker:'), false);
+});
+
+test('feminine casual prompt offers varied expressions and the expanded sticker moods', () => {
+  const prompt = buildReplySystemPrompt({
+    bot: {
+      systemPrompt: 'Answer naturally.',
+      personaStyle: 'feminine',
+      stickerReplies: 'contextual',
+    },
+  }, { text: 'Hai, aku berhasil menyelesaikannya!' });
+
+  assert.match(prompt, /\[\[sticker:thinking\]\]/);
+  assert.match(prompt, /\[\[sticker:celebrate\]\]/);
+  assert.match(prompt, /emoji/iu);
+  assert.match(prompt, /kaomoji/iu);
 });

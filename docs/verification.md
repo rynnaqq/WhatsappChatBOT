@@ -1,5 +1,22 @@
 # Verification
 
+## Expanded emoji, kaomoji, and sticker variety — 2026-10-11
+
+The feminine style now uses a shared guide of 60 emoji and 40 kaomoji across six moods, with 24 named sticker reactions. It suggests one to three suitable expressions in casual answers and avoids repeating recent choices. Expressions and stickers remain optional; the existing contextual delivery controls still apply. Custom/off behavior, saved settings, and provider configuration retain their existing contracts.
+
+| Check | Result |
+| --- | --- |
+| RED/GREEN evidence | Tests against the old implementation rejected new reaction controls and failed native delivery because the assets were absent. All focused persona/AI and sticker tests now pass. |
+| Full suite and syntax | `npm test`: 299 passed, zero failures, cancellations or skips. `npm run check`: all 51 JavaScript files passed. Working and staged diff checks passed. |
+| Runtime guide | All 60 unique emoji, 40 unique kaomoji, and 24 sticker controls appear in the actual casual system prompt. Independent review checked parsing of every catalog ID and exact custom/off prompt preservation. |
+| Real AI and delivery boundaries | Local HTTP tests use the actual AI service and official client: expanded reactions are accepted in one provider call, markers stay out of visible text/history, and a sticker-only celebration records its readable fallback. Actual incoming-handler/asset-loader checks deliver quoted native bytes for celebration, thinking, hug, and goodnight. Existing cooldown, refusal, code-literal, addressing, deduplication, attachment, and upload-failure cases remain covered. |
+| Artwork | All 24 distinct files decode as transparent 512 × 512 WebP, from 18,108 to 24,266 bytes. The six original files are byte-identical to the preceding revision. The full contact sheet was visually inspected. The offline font-free builder uses the shared allowlist; no new dependency or runtime image converter is needed. |
+| Dashboard | Browser checks passed at 1440px and 360px for login, settings persistence, provider test, QR/status, keyboard dialogs, and WCAG AA audits. The help text describes the expanded choices and existing two-minute pause. |
+| Independent review | No critical, important, or minor findings. The reviewer verified immutable unique catalogs, matching asset filenames, fixed-ID parsing, original-asset preservation, and compatibility with the existing delivery path. |
+| Complete source package | The 114-entry ZIP excludes runtime secrets/storage and includes every asset and the shared catalog. Fresh `npm ci --omit=dev --ignore-scripts` and 240 packaged AI/persona/sticker/document/settings tests passed. Its owned CLI served health, login, and authenticated settings on the exported allocated port. Overlay/startup preserved synthetic `secrets.env`, legacy `.env`, encrypted settings, custom instructions, and pairing-marker bytes. |
+
+These checks use synthetic messages, local provider/socket boundaries, and an isolated unpaired fixture process. No live WhatsApp sticker was sent or remote Pterodactyl process restarted. The configured model determines natural phrasing, repetition, and which optional sticker it selects. Manual customization retains fixed filenames and requires a restart to refresh cached bytes; keep custom artwork separately when updating the source pack.
+
 ## Feminine persona and native reaction stickers — 2026-10-11
 
 The default feminine style is an additional runtime instruction, so existing document instructions and encrypted provider keys remain saved. Operators can choose Custom prompt only, occasional contextual stickers, request-only stickers, or Off in Bot behavior. Optional model controls select one fixed local WebP asset; the application removes the command suffix from text and ordinary memory. This does not add another model request.

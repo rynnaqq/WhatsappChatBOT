@@ -1,5 +1,13 @@
 # Implementation progress
 
+## Expanded emoji, kaomoji, and sticker variety — 2026-10-11
+
+- Added a central immutable mood catalog with 60 unique emoji, 40 unique kaomoji, and 24 reaction IDs. The feminine runtime guide suggests one to three suitable casual expressions and varies recent choices; serious and document replies stay restrained. Custom/off settings retain their saved prompt contract.
+- Added 18 original cat reactions with distinct expressions, poses, and props, including hugs, gratitude, thinking, goodnight, coffee, and celebration. All 24 WebP files decode as transparent 512 × 512 images below 100 KB; the original six remain byte-identical. The offline builder shares runtime's canonical IDs and adds no dependencies or runtime conversion.
+- Expanded controls use the existing fixed local allowlist, quoted native-media transport, single AI request, clean memory, and per-mood fallback. Contextual stickers retain their two-minute per-chat pause, addressing rules, explicit-request bypass, refusal/information guards, and attachment/serious-context suppression.
+- New behavior failed against the former six-reaction implementation before integration. Fresh verification passed 299/299 tests, all 51 JavaScript syntax checks, and diff checks. Dashboard checks passed at 1440px and 360px, including settings persistence and WCAG AA audits. The full contact sheet was inspected; independent read-only review found no issues.
+- A complete 114-entry source ZIP passed a fresh production install with scripts disabled, 240 packaged tests, and owned CLI health/login/authenticated-settings checks on its allocated port. Overlay and startup preserved synthetic environment files, encrypted settings, custom instructions, and pairing-marker bytes. Documentation now lists all customizable filenames; actual expression selection depends on the model. No live WhatsApp send or production restart was performed.
+
 ## Feminine persona and native reaction stickers — 2026-10-11
 
 - Added a warm feminine runtime voice with gentle casual Indonesian aku/kamu phrasing, light emoji and kaomoji. The saved system prompt remains intact; Custom prompt only disables the style overlay. Older encrypted settings gain feminine/contextual defaults without rewriting credentials, prompt or trigger mode.
