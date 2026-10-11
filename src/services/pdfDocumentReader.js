@@ -1,7 +1,9 @@
 import { fileURLToPath } from 'node:url';
 import { createCanvas } from '@napi-rs/canvas';
 import { OfficeGenerator } from 'officeparser';
-import { getDocument, OPS, VerbosityLevel } from 'pdfjs-dist/legacy/build/pdf.mjs';
+import { loadPdfJsRuntime } from './pdfJsRuntime.js';
+
+const { getDocument, OPS, VerbosityLevel } = await loadPdfJsRuntime();
 
 const MAX_VISUAL_PAGES = 20;
 const MAX_VISUAL_BYTES = 8 * 1024 * 1024;

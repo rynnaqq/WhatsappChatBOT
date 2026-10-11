@@ -1,5 +1,15 @@
 # Implementation progress
 
+## Scanned PDF processing deadline — 2026-10-11
+
+- The reported `ai_request` failure was the local PDF worker's 25-second deadline. A real eight-page, 4,479,391-byte, 300 dpi A4 table-scan fixture reproduced the same error before the fix.
+- Phase profiling separated fast OfficeParser extraction from slow page rendering. PDF.js's 16-row RGB conversion cost about five seconds per page; changing the conversion chunk to 256 rows produced identical JPEG bytes in the isolated comparison and avoided that slowdown.
+- Added a verified runtime loader for pinned PDF.js 6.2.108. It checks the installed source and derived-module hashes, retains the upstream license and adds a modification notice, then atomically creates a sibling rendering module. The installed source remains unchanged; install scripts are not required.
+- The real attachment pipeline prepared all eight distinct pages in 10.63 and 10.01 seconds on two sequential runs, with identical output hashes. Images retained the final table rows at 1487×2105 pixels. PDF/DOC/DOCX, assets, cancellation, privacy and existing bounds remain covered.
+- Fresh verification passed 254/254 tests, all 45 JavaScript syntax checks and `git diff --check`. A separate read-only review cleared the loader's integrity, race handling, relative assets, cleanup and preserved reader bounds.
+- A complete 81-entry source ZIP passed a fresh `npm ci --omit=dev --ignore-scripts`, 181 packaged attachment/document/AI tests and exported CLI health, login and authenticated-settings checks on its allocated port. Overlay and startup preserved synthetic `secrets.env`, legacy `.env`, encrypted settings and pairing-marker bytes.
+- These measurements use synthetic documents on Windows Node 24.20.0. The operator's actual PDF, remote Linux container, private configuration and running bot were not accessed or restarted.
+
 ## WhatsApp file download recovery — 2026-10-11
 
 - The operator's exact “could not be downloaded” reply localized the failure to WhatsApp media retrieval, before document parsing or model requests. Controlled encrypted-media tests reproduced that reply for HTTP 404/410 with the real pinned Baileys client.

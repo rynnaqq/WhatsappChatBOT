@@ -75,6 +75,51 @@ export function tablePdf({ pages = 2, scanned = false, mixed = false } = {}) {
   return pdf(objects);
 }
 
+export function a4ScannedTablePdf({ pages = 8 } = {}) {
+  const width = 2480;
+  const height = 3508;
+  const objects = ['<< /Type /Catalog /Pages 2 0 R >>', null];
+  const kids = [];
+  for (let pageNumber = 1; pageNumber <= pages; pageNumber += 1) {
+    const canvas = createCanvas(width, height);
+    const context = canvas.getContext('2d');
+    context.fillStyle = '#ffffff';
+    context.fillRect(0, 0, width, height);
+    const pixels = context.getImageData(0, 0, width, height);
+    let seed = pageNumber;
+    for (let offset = 0; offset < pixels.data.length; offset += 4) {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      const shade = 255 - (seed >>> 16) % 5;
+      pixels.data[offset] = shade;
+      pixels.data[offset + 1] = shade;
+      pixels.data[offset + 2] = shade;
+    }
+    context.putImageData(pixels, 0, 0);
+    context.fillStyle = '#111111';
+    context.font = 'bold 76px sans-serif';
+    context.fillText(`300 DPI A4 table scan - page ${pageNumber}`, 160, 230);
+    context.font = '48px sans-serif';
+    for (let row = 0; row < 24; row += 1) {
+      const y = 390 + row * 112;
+      context.strokeRect(160, y, 2160, 112);
+      context.fillText(`Row ${row + 1}`, 195, y + 73);
+      context.fillText((1000 + pageNumber * 100 + row).toFixed(2), 1740, y + 73);
+    }
+    const image = canvas.toBuffer('image/jpeg', 88);
+    canvas.width = 0;
+    canvas.height = 0;
+    const pageId = objects.length + 1;
+    const contentId = pageId + 1;
+    const imageId = pageId + 2;
+    objects.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /XObject << /Im1 ${imageId} 0 R >> >> /Contents ${contentId} 0 R >>`);
+    objects.push(stream('q 595 0 0 842 0 0 cm /Im1 Do Q'));
+    objects.push(stream(image, `/Type /XObject /Subtype /Image /Width ${width} /Height ${height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode`));
+    kids.push(`${pageId} 0 R`);
+  }
+  objects[1] = `<< /Type /Pages /Kids [${kids.join(' ')}] /Count ${pages} >>`;
+  return pdf(objects);
+}
+
 export function mergedTableDocx() {
   const entries = {
     '[Content_Types].xml': '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>',

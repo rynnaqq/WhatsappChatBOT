@@ -1,12 +1,45 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
-import { loadImage } from '@napi-rs/canvas';
+import { createCanvas, loadImage } from '@napi-rs/canvas';
 import { prepareAttachment, AttachmentUserFacingError } from '../src/services/attachmentService.js';
-import { tablePdf, mergedTableDocx } from './fixtures/documents.js';
+import { tablePdf, a4ScannedTablePdf, mergedTableDocx } from './fixtures/documents.js';
 
 const ai = { visionEnabled: true, mediaEnabled: true, maxFileMB: 10, maxImageMB: 5, attachmentTransport: 'auto' };
 const pdfAttachment = buffer => ({ kind: 'document', fileName: 'ledger.pdf', mimeType: 'application/pdf', buffer });
+
+test('reads every page of an eight-page 4 MB A4 table scan within the document worker deadline', async () => {
+  const buffer = a4ScannedTablePdf();
+  assert.ok(buffer.length >= 3_500_000 && buffer.length <= 5_000_000);
+  const result = await prepareAttachment(pdfAttachment(buffer), { ai });
+  const images = result.parts.filter(part => part.type === 'image_url');
+  assert.equal(images.length, 8);
+  assert.equal(new Set(images.map(part => part.image_url.url)).size, 8);
+  assert.equal(result.requiresVision, true);
+  const text = result.parts.filter(part => part.type === 'text').map(part => part.text).join('\n');
+  for (let pageNumber = 1; pageNumber <= 8; pageNumber += 1) assert.ok(text.includes(`Page ${pageNumber} of 8`));
+  for (const part of images) {
+    const image = await loadImage(Buffer.from(part.image_url.url.split(',')[1], 'base64'));
+    assert.ok(image.width >= 1200);
+    assert.ok(Math.max(image.width, image.height) <= 2400);
+    assert.ok(image.width * image.height <= 4_000_000);
+    const canvas = createCanvas(image.width, image.height);
+    try {
+      const context = canvas.getContext('2d');
+      context.drawImage(image, 0, 0);
+      const area = context.getImageData(
+        Math.floor(image.width * 1720 / 2480), Math.floor(image.height * 2980 / 3508),
+        Math.floor(image.width * 400 / 2480), Math.floor(image.height * 80 / 3508),
+      );
+      let darkPixels = 0;
+      for (let offset = 0; offset < area.data.length; offset += 4) if (area.data[offset] < 100) darkPixels += 1;
+      assert.ok(darkPixels > 100, 'The last table row must retain its scanned values.');
+    } finally {
+      canvas.width = 0;
+      canvas.height = 0;
+    }
+  }
+});
 
 for (const [name, options] of [
   ['digital tables', {}],

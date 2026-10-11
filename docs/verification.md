@@ -1,5 +1,27 @@
 # Verification
 
+## Scanned PDF processing deadline — 2026-10-11
+
+The reported error came from the local PDF worker, after media download and before a provider request. A representative eight-page, 4,479,391-byte A4 scan reproduced `The PDF took too long to process.` against the unchanged 25-second worker deadline. A separate eight-page, 2.55 MB scan completed in 50.2 seconds with the deadline temporarily extended only in the ignored profiling helper: OfficeParser took 0.15 seconds and rendering dominated the remainder.
+
+The isolated renderer benchmark localized the cost to PDF.js's RGB-to-RGBA conversion in 16-row chunks, rather than JPEG decoding, native pixel painting, filesystem assets or worker heap size. Increasing the chunk to 256 rows reduced a real page render from 4.18 to 0.48 seconds, with byte-identical JPEG output. The temporary chunk buffer remains bounded to 8 MiB at the permitted 8192-pixel internal width.
+
+The application loads a derived copy of pinned PDF.js 6.2.108 containing that adjustment and a modification notice, retaining the original license. Version, original source hash, patch marker and cached module hash are checked before import. Unique temporary files and atomic rename handle concurrent readers. The sibling location preserves worker imports and asset paths, and the original dependency source is untouched. Installation scripts can remain disabled.
+
+| Check | Result |
+| --- | --- |
+| Regression before fix | The real eight-page scan preparation failed with the same PDF timeout; no pages were sampled or skipped. |
+| Real preparation after fix | Two sequential reads completed in 10.63 and 10.01 seconds; both produced eight distinct 1487×2105 JPEGs totaling 2,102,263 bytes with identical output hashes. |
+| Page fidelity | All eight page labels, output resolution bounds and ink in the last row's numeric area passed. The isolated chunk-size comparison preserved exact JPEG bytes. |
+| Runtime safeguards | Five real loader tests passed: independent concurrent loaders, untouched original source, cache reuse, corrupted cache rejection, unsupported version, altered source and ambiguous marker rejection. |
+| Full suite and syntax | `npm test`: 254 passed, zero failures, cancellations or skips. `npm run check`: all 45 JavaScript files passed. `git diff --check` passed. |
+| Independent review | Cleared integrity-before-import, Windows paths, atomic creation/cleanup, relative worker/assets, fidelity tests and preserved safety bounds. |
+| Complete source package | The complete 81-entry ZIP passed a fresh `npm ci --omit=dev --ignore-scripts`, 181 packaged attachment/document/AI tests and exported CLI health, login and authenticated-settings checks on its allocated port. Overlay and startup preserved synthetic `secrets.env`, legacy `.env`, encrypted settings and pairing-marker bytes. Only the owned, isolated fixture process was started and stopped. |
+
+PDF limits remain 25 seconds per worker, 128 MiB old-generation heap, two concurrent readers, 20 visual pages and 8 MiB total JPEG data. Final images remain capped at 2400 pixels per edge and four million pixels; internal canvases retain the 8192-edge/16-million-pixel bounds. Preparation still shares the configured total AI deadline. DOC and DOCX parsing and native PDF transports are unchanged and passed the suite.
+
+Checks ran on Windows Node 24.20.0 with synthetic documents. The operator's actual PDF and remote Pterodactyl/Linux runtime were not accessed. No provider calls or production-bot restarts were performed for this performance fix. Abrupt termination during derived-module creation was not fault-injected; normal cleanup paths and subsequent integrity checks were reviewed.
+
 ## WhatsApp file download recovery — 2026-10-11
 
 The operator's exact reply was “could not be downloaded”, which comes from media retrieval before any document reader or AI request. A real Baileys client against controlled HTTPS dispatch responses reproduced that error on expired HTTP 404/410 media. The pinned client throws Boom errors with `output.statusCode`, but its built-in refresh checks `error.status`: [download/retry source](https://github.com/WhiskeySockets/Baileys/blob/v7.0.0-rc14/src/Utils/messages.ts), [HTTP error source](https://github.com/WhiskeySockets/Baileys/blob/v7.0.0-rc14/src/Utils/messages-media.ts).
