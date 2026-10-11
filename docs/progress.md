@@ -1,5 +1,15 @@
 # Implementation progress
 
+## PDF deadline follows dashboard Timeout — 2026-10-11
+
+- The repeated deployed `The PDF took too long to process.` reply comes from the PDF worker's fixed 25-second timer. That timer remained independent of the dashboard's AI Timeout after the rendering optimization. The latest logs also show two successful replies and a later, separate HTTP 503 provider failure after three transient retries.
+- PDF processing now uses 75% of a valid configured AI Timeout, with a 60-second default and 120-second hard cap. Other Office documents retain 15 seconds; the existing total-operation cancellation signal, two-reader limit, worker heap and all-page/image bounds still apply. Saved settings and provider retry behavior are unchanged.
+- Workers send phase/page progress separately from their terminal result. Safe `document_processed` and `document_processing_failed` events identify reader version `pdf-256-budget-v1`, the last phase, completed pages and elapsed/allowed time. Diagnostic failures cannot interrupt reading; names, contents, raw errors and credentials are excluded.
+- A fresh controlled end-to-end check used a synthetic eight-page 4,479,391-byte A4 scan and the real AI service. Reading completed in 28.31 seconds under concurrent test load, exceeding the former 25-second limit; the local provider received all eight images and numbered page labels in one request. Total time was 28.49 seconds, with a 120-second PDF budget from a 180-second AI Timeout.
+- Fresh full verification passed 260/260 tests, all 45 JavaScript syntax checks and `git diff --check`. Tests cover real eight-page reading past the old virtual cutoff, default/capped/short budgets, nonterminal progress, cancellation and slot release, safe logs, logger failures and AI integration. A separate read-only review cleared the implementation.
+- A complete 81-entry source ZIP passed a fresh production installation with scripts disabled, 187 packaged attachment/document/AI tests and exported CLI health/login/authenticated-settings checks on its allocated port. Overlay and startup preserved synthetic `secrets.env`, legacy `.env`, encrypted settings and pairing-marker bytes.
+- These checks do not establish the remote server's deployed version, CPU/RAM allocation, actual PDF complexity or upstream reason for HTTP 503. No private files, saved credentials or production processes were accessed or restarted.
+
 ## Scanned PDF processing deadline — 2026-10-11
 
 - The reported `ai_request` failure was the local PDF worker's 25-second deadline. A real eight-page, 4,479,391-byte, 300 dpi A4 table-scan fixture reproduced the same error before the fix.

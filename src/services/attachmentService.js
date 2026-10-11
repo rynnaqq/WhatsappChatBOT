@@ -7,6 +7,14 @@ const MAX_TEXT_CHARS = 60_000;
 const MAX_ARCHIVE_ENTRIES = 512;
 const MAX_ARCHIVE_BYTES = 32 * MEBIBYTE;
 const OFFICE_TIMEOUT_MS = 15_000;
+const DEFAULT_AI_TIMEOUT_SECONDS = 60;
+const MAX_PDF_TIMEOUT_MS = 120_000;
+const PDF_READER_VERSION = 'pdf-256-budget-v1';
+const DOCUMENT_PROGRESS_PHASES = new Set([
+  'boot', 'parser_import', 'office_parse', 'pdf_runtime',
+  'pdf_inspect', 'pdf_render', 'pdf_encode', 'pdf_complete',
+]);
+const MAX_PROGRESS_COUNT = 1_000_000;
 const MAX_ACTIVE_OFFICE_WORKERS = 2;
 let activeOfficeWorkers = 0;
 
@@ -34,7 +42,7 @@ export class AttachmentUserFacingError extends Error {
   }
 }
 
-export async function prepareAttachment(attachment, { ai = {}, signal } = {}) {
+export async function prepareAttachment(attachment, { ai = {}, signal, logger } = {}) {
   try {
     validateAttachment(attachment);
     throwIfAborted(signal);
@@ -80,7 +88,11 @@ export async function prepareAttachment(attachment, { ai = {}, signal } = {}) {
     if (mimeType === 'application/pdf' || ext === 'pdf') {
       if (mimeType !== 'application/pdf' || !buffer.subarray(0, 5).equals(Buffer.from('%PDF-'))) throw new AttachmentUserFacingError('The PDF file is invalid or does not match its file type.');
       if (!isExplicitNativePdfTransport(ai)) {
-        const parsed = await parseDocumentInWorker(buffer, 'pdf', signal, { includeVisuals: ai.visionEnabled === true });
+        const parsed = await parseDocumentInWorker(buffer, 'pdf', signal, {
+          includeVisuals: ai.visionEnabled === true,
+          timeoutMs: pdfTimeoutMs(ai.timeoutSeconds),
+          logger,
+        });
         throwIfAborted(signal);
         if (parsed.visualPages.length) {
           const result = textResult('document', fileName, mimeType, buffer.byteLength, parsed.value, parsed.truncated);
@@ -297,10 +309,11 @@ function isSafeArchiveName(name) {
   return !name.split('/').some((part) => part === '..');
 }
 
-async function parseDocumentInWorker(buffer, fileType, signal, { includeVisuals = false } = {}) {
+async function parseDocumentInWorker(buffer, fileType, signal, { includeVisuals = false, timeoutMs = OFFICE_TIMEOUT_MS, logger } = {}) {
   throwIfAborted(signal);
   if (activeOfficeWorkers >= MAX_ACTIVE_OFFICE_WORKERS) throw new AttachmentUserFacingError('The document reader is busy. Please retry shortly.');
   const label = fileType === 'pdf' ? 'PDF' : 'Office document';
+  const startedAt = performance.now();
   activeOfficeWorkers += 1;
   let worker;
   try {
@@ -312,9 +325,26 @@ async function parseDocumentInWorker(buffer, fileType, signal, { includeVisuals 
     });
   } catch (error) {
     activeOfficeWorkers -= 1;
+    if (fileType === 'pdf') {
+      safeLog(logger, 'warn', {
+        event: 'document_processing_failed',
+        documentType: fileType,
+        phase: 'boot',
+        pageNumber: 0,
+        pageCount: 0,
+        completedPages: 0,
+        readerVersion: PDF_READER_VERSION,
+        elapsedMs: Math.max(0, Math.round(performance.now() - startedAt)),
+        limitMs: timeoutMs,
+      }, 'PDF document processing failed.');
+    }
     throw error;
   }
   return new Promise((resolve, reject) => {
+    let latestProgress = {
+      phase: 'boot', pageNumber: 0, pageCount: 0, completedPages: 0,
+      readerVersion: PDF_READER_VERSION,
+    };
     let settling = false;
     let slotReleased = false;
     const releaseSlot = () => {
@@ -347,16 +377,71 @@ async function parseDocumentInWorker(buffer, fileType, signal, { includeVisuals 
       releaseSlot();
       callback();
     };
-    const onAbort = () => finishAfterTermination(() => reject(signal.reason ?? new DOMException('The operation was aborted.', 'AbortError')));
-    const timer = setTimeout(() => finishAfterTermination(() => reject(new AttachmentUserFacingError(`The ${label} took too long to process.`))), fileType === 'pdf' ? 25_000 : OFFICE_TIMEOUT_MS);
+    const metadata = event => ({
+      event,
+      documentType: fileType,
+      ...latestProgress,
+      elapsedMs: Math.max(0, Math.round(performance.now() - startedAt)),
+      limitMs: timeoutMs,
+    });
+    const fail = (error) => {
+      if (fileType === 'pdf') safeLog(logger, 'warn', metadata('document_processing_failed'), 'PDF document processing failed.');
+      reject(error);
+    };
+    const onAbort = () => finishAfterTermination(() => fail(signal.reason ?? new DOMException('The operation was aborted.', 'AbortError')));
+    const timer = setTimeout(() => finishAfterTermination(() => fail(new AttachmentUserFacingError(
+      fileType === 'pdf'
+        ? 'The PDF took too long to process. Increase Timeout in the dashboard, then resend it or split it into smaller files.'
+        : `The ${label} took too long to process.`,
+    ))), timeoutMs);
     timer.unref?.();
     signal?.addEventListener('abort', onAbort, { once: true });
-    worker.once('message', (message) => finishAfterTermination(() => message?.ok
-      ? resolve({ value: message.text, truncated: Boolean(message.truncated), visualPages: Array.isArray(message.visualPages) ? message.visualPages : [], pageCount: message.pageCount, requiresNative: message.requiresNative === true })
-      : reject(documentReadError(message?.errorCode, label))));
-    worker.once('error', () => finishAfterTermination(() => reject(new AttachmentUserFacingError(`The ${label} could not be processed safely.`))));
-    worker.once('exit', () => finishAfterExit(() => reject(new AttachmentUserFacingError(`The ${label} could not be processed safely.`))));
+    worker.on('message', (message) => {
+      if (settling) return;
+      if (message?.type === 'progress') {
+        const progress = safeDocumentProgress(message);
+        if (progress) latestProgress = progress;
+        return;
+      }
+      finishAfterTermination(() => {
+        if (!message?.ok) {
+          fail(documentReadError(message?.errorCode, label));
+          return;
+        }
+        if (fileType === 'pdf') safeLog(logger, 'info', metadata('document_processed'), 'PDF document processed.');
+        resolve({ value: message.text, truncated: Boolean(message.truncated), visualPages: Array.isArray(message.visualPages) ? message.visualPages : [], pageCount: message.pageCount, requiresNative: message.requiresNative === true });
+      });
+    });
+    worker.once('error', () => finishAfterTermination(() => fail(new AttachmentUserFacingError(`The ${label} could not be processed safely.`))));
+    worker.once('exit', () => finishAfterExit(() => fail(new AttachmentUserFacingError(`The ${label} could not be processed safely.`))));
   });
+}
+
+function safeDocumentProgress(message) {
+  if (!DOCUMENT_PROGRESS_PHASES.has(message?.phase)) return null;
+  const count = value => Number.isSafeInteger(value) && value >= 0 && value <= MAX_PROGRESS_COUNT ? value : 0;
+  return {
+    phase: message.phase,
+    pageNumber: count(message.pageNumber),
+    pageCount: count(message.pageCount),
+    completedPages: count(message.completedPages),
+    readerVersion: message.readerVersion === PDF_READER_VERSION ? PDF_READER_VERSION : null,
+  };
+}
+
+function safeLog(logger, level, metadata, message) {
+  try {
+    logger?.[level]?.(metadata, message);
+  } catch {
+    // Diagnostics must never alter attachment processing.
+  }
+}
+
+function pdfTimeoutMs(timeoutSeconds) {
+  const seconds = Number.isFinite(timeoutSeconds) && timeoutSeconds > 0
+    ? timeoutSeconds
+    : DEFAULT_AI_TIMEOUT_SECONDS;
+  return Math.min(seconds * 750, MAX_PDF_TIMEOUT_MS);
 }
 
 function documentReadError(code, label) {

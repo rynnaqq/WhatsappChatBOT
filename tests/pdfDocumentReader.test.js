@@ -156,6 +156,24 @@ test('renders every page as a bounded JPEG when one page contains a scan', async
   }
 });
 
+test('reports bounded render, encode, and page completion progress', async () => {
+  const buffer = tablePdf({ mixed: true });
+  const progress = [];
+  const result = await readPdfDocument(buffer, await parsePdf(buffer), {
+    includeVisuals: true,
+    onProgress: update => progress.push(update),
+  });
+
+  assert.equal(result.visualPages.length, 2);
+  assert.deepEqual(progress.filter(update => update.phase === 'pdf_render').map(update => update.pageNumber), [1, 2]);
+  assert.deepEqual(progress.filter(update => update.phase === 'pdf_encode').map(update => update.pageNumber), [1, 2]);
+  assert.deepEqual(progress.filter(update => update.phase === 'pdf_complete').map(update => update.completedPages), [1, 2]);
+  for (const update of progress) {
+    assert.deepEqual(Object.keys(update).toSorted(), ['completedPages', 'pageCount', 'pageNumber', 'phase']);
+    assert.equal(update.pageCount, 2);
+  }
+});
+
 test('accepts a standard 300 DPI A4 scan and downsizes its final page image', async () => {
   const buffer = standardScanPdf();
   const result = await readPdfDocument(buffer, await parsePdf(buffer), { includeVisuals: true });

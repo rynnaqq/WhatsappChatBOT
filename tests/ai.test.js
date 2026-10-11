@@ -4,6 +4,7 @@ import test from 'node:test';
 
 import { AIService, UserFacingError } from '../src/services/aiService.js';
 import { MemoryService } from '../src/services/memoryService.js';
+import { tablePdf } from './fixtures/documents.js';
 
 function settings(overrides = {}) {
   return {
@@ -633,6 +634,38 @@ test('attachment preparation shares the total AI deadline and cannot dispatch af
   await assert.rejects(service.reply({ chatId: 'chat', attachment: { kind: 'document', buffer: Buffer.from('fixture') } }), (error) => error instanceof UserFacingError && /timed out/i.test(error.message));
   assert.equal(requests, 0);
   assert.deepEqual(memory.get('chat', 3), []);
+});
+
+test('real PDF preparation receives the AI logger and reports a safe processing failure', async () => {
+  const logs = [];
+  let requests = 0;
+  const service = new AIService({
+    settingsRepo: fakeRepo(settings({ ai: { timeoutSeconds: 60 } })),
+    memory: new MemoryService(),
+    logger: {
+      warn: (...args) => logs.push(args),
+      error: (...args) => logs.push(args),
+    },
+    clientFactory: () => ({ chat: { completions: { create: async () => { requests += 1; return completion(); } } } }),
+  });
+
+  await assert.rejects(service.reply({
+    chatId: 'chat',
+    attachment: {
+      kind: 'document',
+      mimeType: 'application/pdf',
+      fileName: 'PRIVATE-FILENAME.pdf',
+      buffer: tablePdf({ pages: 21 }),
+    },
+  }), error => error instanceof UserFacingError && /split/i.test(error.message));
+
+  assert.equal(requests, 0);
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0][0].event, 'document_processing_failed');
+  const serialized = JSON.stringify(logs);
+  assert.equal(serialized.includes('PRIVATE-FILENAME'), false);
+  assert.equal(serialized.includes('Ledger'), false);
+  assert.equal(serialized.includes('provider-secret'), false);
 });
 
 test('a model rejection of a file has a helpful safe error without raw provider content', async (t) => {

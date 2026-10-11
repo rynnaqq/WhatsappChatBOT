@@ -79,7 +79,7 @@ export class AIService {
       let prepared;
       if (attachment !== undefined && attachment !== null) {
         try {
-          prepared = await this.#prepareAttachment(attachment, { ai: settings.ai, signal: operation.signal });
+          prepared = await this.#prepareAttachment(attachment, { ai: settings.ai, signal: operation.signal, logger: this.#logger });
         } catch (error) {
           if (error instanceof AttachmentUserFacingError) throw new UserFacingError(error.message);
           throw error;

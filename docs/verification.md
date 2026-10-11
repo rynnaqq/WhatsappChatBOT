@@ -1,5 +1,25 @@
 # Verification
 
+## PDF deadline follows dashboard Timeout — 2026-10-11
+
+The repeated PDF timeout reports show the same fixed worker deadline as the preceding incident; the actual Pterodactyl source revision, resources and PDF are still unconfirmed. Local code inspection found that increasing the dashboard's AI Timeout could not extend the fixed 25-second PDF deadline. The latest operator logs separately show two successful replies, then four AI requests returning HTTP 503, including three transient retries.
+
+PDF preparation now receives 75% of a positive finite configured AI Timeout, defaulting to 45 seconds for a 60-second overall operation and capped at 120 seconds. The shared AI abort signal still bounds preparation plus provider work. Other Office files keep the 15-second deadline, and PDF page count, image bytes, canvas dimensions, heap and two-worker limits retain their previous bounds. Use at least 180 seconds for slow servers to permit the full PDF cap; higher existing values need not be reduced.
+
+Worker progress uses a separate message type. The parent retains only allowlisted phases, bounded integer page counts and a fixed reader version, then logs one safe completion/failure event. A progress message cannot resolve or reject the attachment. Termination remains awaited before a slot is released, and logging exceptions do not change the operation's outcome.
+
+| Check | Result |
+| --- | --- |
+| Regression before fix | Advancing the parent's virtual clock past 25 seconds while a real eight-page worker was still reading reproduced `AttachmentUserFacingError: The PDF took too long to process.`; the targeted run had zero passes and one failure. The configured-budget test now completes with all eight pages retained. |
+| Controlled end-to-end PDF | The real AI service prepared a synthetic eight-page, 4,479,391-byte scan in 28.31 seconds under concurrent test load. A local controlled provider received all eight page images and numbered labels in one request; total time was 28.49 seconds. This exceeds the old 25-second limit and succeeds with a 120-second PDF budget. |
+| Safe integration log | The completion event reported `pdf-256-budget-v1`, `pdf_complete`, eight completed pages and the allowed/elapsed time. The synthetic filename, key, document text and image data were absent. |
+| Deadline and lifecycle tests | Real workers survive the old 25-second virtual cutoff, complete all eight pages, enforce short/default/capped budgets, accept nonterminal progress and release both slots after cancellation. Logger exceptions and private cancellation reasons do not affect results or expose private data. |
+| Full suite and syntax | `npm test`: 260 passed, zero failures, cancellations or skips. `npm run check`: all 45 JavaScript files passed. `git diff --check` passed. |
+| Independent review | No issues found in budget/default/cap behavior, termination and slot release, progress protocol, safe metadata, AI logger integration or the tests and documentation. Remote completion and provider availability were explicitly outside the evidence available to this review. |
+| Complete source package | The complete 81-entry ZIP passed a fresh `npm ci --omit=dev --ignore-scripts`, 187 packaged attachment/document/AI tests and exported CLI health/login/authenticated-settings checks on its allocated port. Overlay and startup preserved synthetic `secrets.env`, legacy `.env`, encrypted settings and pairing-marker bytes. Only the owned, isolated fixture process was started and stopped. |
+
+No live provider requests or production-bot restarts were performed. Checks use synthetic documents and controlled local endpoints on Windows; they do not verify the operator's private PDF, remote Linux runtime or the reason its AI endpoint returned HTTP 503.
+
 ## Scanned PDF processing deadline — 2026-10-11
 
 The reported error came from the local PDF worker, after media download and before a provider request. A representative eight-page, 4,479,391-byte A4 scan reproduced `The PDF took too long to process.` against the unchanged 25-second worker deadline. A separate eight-page, 2.55 MB scan completed in 50.2 seconds with the deadline temporarily extended only in the ignored profiling helper: OfficeParser took 0.15 seconds and rendering dominated the remainder.

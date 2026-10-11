@@ -8,10 +8,13 @@ import { tablePdf, a4ScannedTablePdf, mergedTableDocx } from './fixtures/documen
 const ai = { visionEnabled: true, mediaEnabled: true, maxFileMB: 10, maxImageMB: 5, attachmentTransport: 'auto' };
 const pdfAttachment = buffer => ({ kind: 'document', fileName: 'ledger.pdf', mimeType: 'application/pdf', buffer });
 
-test('reads every page of an eight-page 4 MB A4 table scan within the document worker deadline', async () => {
+test('uses the configured PDF budget instead of the old fixed 25 second worker deadline', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
   const buffer = a4ScannedTablePdf();
   assert.ok(buffer.length >= 3_500_000 && buffer.length <= 5_000_000);
-  const result = await prepareAttachment(pdfAttachment(buffer), { ai });
+  const reading = prepareAttachment(pdfAttachment(buffer), { ai: { ...ai, timeoutSeconds: 60 } });
+  t.mock.timers.tick(26_000);
+  const result = await reading;
   const images = result.parts.filter(part => part.type === 'image_url');
   assert.equal(images.length, 8);
   assert.equal(new Set(images.map(part => part.image_url.url)).size, 8);
@@ -68,10 +71,15 @@ for (const [name, options] of [
 }
 
 test('PDF visual page limits reject incomplete reading instead of silently dropping pages', async () => {
+  const logs = [];
   await assert.rejects(
-    prepareAttachment(pdfAttachment(tablePdf({ pages: 21 })), { ai }),
+    prepareAttachment(pdfAttachment(tablePdf({ pages: 21 })), { ai, logger: { warn: entry => logs.push(entry) } }),
     error => error instanceof AttachmentUserFacingError && /pages|split/i.test(error.message),
   );
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].event, 'document_processing_failed');
+  assert.equal(logs[0].phase, 'pdf_inspect');
+  assert.equal(JSON.stringify(logs).includes('ledger.pdf'), false);
 });
 
 test('PDF tables retain original native fallback when vision is disabled', async () => {
@@ -81,6 +89,108 @@ test('PDF tables retain original native fallback when vision is disabled', async
   assert.ok(original);
   assert.equal(original.file.file_data, 'data:application/pdf;base64,' + buffer.toString('base64'));
   assert.equal(result.requiresVision, undefined);
+});
+
+test('PDF worker progress does not settle the result and produces only safe metadata', async () => {
+  const logs = [];
+  const result = await prepareAttachment(pdfAttachment(tablePdf({ mixed: true })), {
+    ai: { ...ai, timeoutSeconds: 60 },
+    logger: { info: entry => { logs.push(entry); throw new Error('synthetic logger failure'); } },
+  });
+
+  assert.equal(result.parts.filter(part => part.type === 'image_url').length, 2);
+  assert.equal(result.parts.filter(part => part.type === 'text').some(part => part.text.includes('Page 2 of 2')), true);
+  assert.deepEqual(logs, [{
+    event: 'document_processed',
+    documentType: 'pdf',
+    phase: 'pdf_complete',
+    pageNumber: 2,
+    pageCount: 2,
+    completedPages: 2,
+    elapsedMs: logs[0]?.elapsedMs,
+    limitMs: 45_000,
+    readerVersion: 'pdf-256-budget-v1',
+  }]);
+  assert.equal(Number.isInteger(logs[0].elapsedMs) && logs[0].elapsedMs >= 0, true);
+  const serialized = JSON.stringify(logs);
+  assert.equal(serialized.includes('ledger.pdf'), false);
+  assert.equal(serialized.includes('Ledger'), false);
+});
+
+test('a positive fractional PDF budget times out safely and logs no private data', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const logs = [];
+  const controller = new AbortController();
+  const reading = prepareAttachment({
+    ...pdfAttachment(tablePdf({ mixed: true })),
+    fileName: 'PRIVATE-FILENAME.pdf',
+  }, {
+    ai: { ...ai, timeoutSeconds: 0.004 },
+    signal: controller.signal,
+    logger: { warn: entry => logs.push(entry) },
+  });
+  t.mock.timers.tick(4);
+
+  await assert.rejects(reading, error => error instanceof AttachmentUserFacingError
+    && /increase Timeout/i.test(error.message)
+    && /resend|split/i.test(error.message));
+  assert.equal(logs.length, 1);
+  assert.deepEqual({
+    event: logs[0].event,
+    documentType: logs[0].documentType,
+    limitMs: logs[0].limitMs,
+    readerVersion: logs[0].readerVersion,
+  }, {
+    event: 'document_processing_failed',
+    documentType: 'pdf',
+    limitMs: 3,
+    readerVersion: 'pdf-256-budget-v1',
+  });
+  assert.equal(Number.isInteger(logs[0].elapsedMs) && logs[0].elapsedMs >= 0, true);
+  assert.equal(JSON.stringify(logs).includes('PRIVATE-FILENAME'), false);
+});
+
+test('invalid and oversized PDF timeout settings use the 45 second default and 120 second cap', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  for (const [timeoutSeconds, beforeLimit, atLimit, expectedLimit] of [
+    [Number.NaN, 44_999, 1, 45_000],
+    [1_000, 119_999, 1, 120_000],
+  ]) {
+    const logs = [];
+    let settled = false;
+    const reading = prepareAttachment(pdfAttachment(tablePdf({ mixed: true })), {
+      ai: { ...ai, timeoutSeconds },
+      logger: { warn: entry => logs.push(entry) },
+    });
+    reading.then(() => { settled = true; }, () => { settled = true; });
+    t.mock.timers.tick(beforeLimit);
+    assert.equal(settled, false);
+    t.mock.timers.tick(atLimit);
+    await assert.rejects(reading, AttachmentUserFacingError);
+    assert.equal(logs.length, 1);
+    assert.equal(logs[0].limitMs, expectedLimit);
+  }
+});
+
+test('cancelling PDF workers logs once per worker and releases both reader slots', async () => {
+  const buffer = tablePdf({ mixed: true });
+  const logs = [];
+  const controllers = [new AbortController(), new AbortController()];
+  const readings = controllers.map(controller => prepareAttachment(pdfAttachment(buffer), {
+    ai: { ...ai, timeoutSeconds: 60 },
+    signal: controller.signal,
+    logger: { warn: entry => logs.push(entry) },
+  }));
+  controllers[0].abort(new DOMException('PRIVATE-CANCEL-ONE', 'AbortError'));
+  controllers[1].abort(new DOMException('PRIVATE-CANCEL-TWO', 'AbortError'));
+  const cancelled = await Promise.allSettled(readings);
+  assert.deepEqual(cancelled.map(result => result.status), ['rejected', 'rejected']);
+  assert.equal(logs.length, 2);
+  assert.equal(logs.every(entry => entry.event === 'document_processing_failed'), true);
+  assert.equal(JSON.stringify(logs).includes('PRIVATE-CANCEL'), false);
+
+  const result = await prepareAttachment(pdfAttachment(buffer), { ai: { ...ai, timeoutSeconds: 60 } });
+  assert.equal(result.parts.filter(part => part.type === 'image_url').length, 2);
 });
 
 test('DOCX extraction retains merged-cell structure and row-value associations', async () => {

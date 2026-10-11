@@ -190,7 +190,16 @@ function renderViewport(page) {
   return page.getViewport({ scale });
 }
 
-async function renderPdf(pdf) {
+function reportProgress(onProgress, phase, pageNumber, pageCount, completedPages) {
+  if (typeof onProgress !== 'function') return;
+  try {
+    onProgress({ phase, pageNumber, pageCount, completedPages });
+  } catch {
+    // Progress reporting must never interrupt document reading.
+  }
+}
+
+async function renderPdf(pdf, onProgress) {
   if (pdf.numPages > MAX_VISUAL_PAGES) {
     throw limitError(
       'PDF_VISUAL_PAGE_LIMIT',
@@ -205,6 +214,7 @@ async function renderPdf(pdf) {
     let page;
     let canvasAndContext;
     try {
+      reportProgress(onProgress, 'pdf_render', pageNumber, pdf.numPages, pageNumber - 1);
       page = await pdf.getPage(pageNumber);
       const viewport = renderViewport(page);
       canvasAndContext = canvasFactory.create(Math.floor(viewport.width), Math.floor(viewport.height));
@@ -214,6 +224,7 @@ async function renderPdf(pdf) {
         viewport,
         background: '#ffffff',
       }).promise;
+      reportProgress(onProgress, 'pdf_encode', pageNumber, pdf.numPages, pageNumber - 1);
       const bytes = canvasAndContext.canvas.toBuffer('image/jpeg', 92);
       totalBytes += bytes.byteLength;
       if (totalBytes > MAX_VISUAL_BYTES) {
@@ -223,6 +234,7 @@ async function renderPdf(pdf) {
         );
       }
       visualPages.push({ pageNumber, bytes });
+      reportProgress(onProgress, 'pdf_complete', pageNumber, pdf.numPages, pageNumber);
     } finally {
       if (canvasAndContext) canvasFactory.destroy(canvasAndContext);
       page?.cleanup();
@@ -231,7 +243,7 @@ async function renderPdf(pdf) {
   return visualPages;
 }
 
-export async function readPdfDocument(buffer, ast, { maxChars = 60_000, includeVisuals = false } = {}) {
+export async function readPdfDocument(buffer, ast, { maxChars = 60_000, includeVisuals = false, onProgress } = {}) {
   if (!Number.isSafeInteger(maxChars) || maxChars < 0) {
     throw limitError('PDF_CONTENT_LIMIT', 'The PDF text limit is invalid.');
   }
@@ -254,11 +266,13 @@ export async function readPdfDocument(buffer, ast, { maxChars = 60_000, includeV
   let pdf;
   try {
     pdf = await loadingTask.promise;
+    reportProgress(onProgress, 'pdf_inspect', 0, pdf.numPages, 0);
     const [textResult, needsVisual] = await Promise.all([
       generateDocumentText(ast, pdf.numPages, maxChars),
       inspectPdf(pdf, ast),
     ]);
-    const visualPages = needsVisual && includeVisuals ? await renderPdf(pdf) : [];
+    const visualPages = needsVisual && includeVisuals ? await renderPdf(pdf, onProgress) : [];
+    if (visualPages.length === 0) reportProgress(onProgress, 'pdf_complete', pdf.numPages, pdf.numPages, pdf.numPages);
     return {
       ...textResult,
       visualPages,
