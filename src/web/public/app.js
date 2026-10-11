@@ -143,6 +143,26 @@ form.addEventListener('input', (event) => {
   }
   updateFormState();
 });
+form.addEventListener('focusin', ({ target }) => {
+  if (!target.matches('input, select, textarea, button')) return;
+  // Native Tab scrolling can expose only a textarea's caret or hide a field under sticky controls.
+  requestAnimationFrame(() => {
+    if (document.activeElement !== target || !target.matches(':focus-visible')) return;
+    const rect = target.getBoundingClientRect();
+    const nav = $('.sidebar');
+    const navRect = nav.getBoundingClientRect();
+    const saveBar = $('.save-bar');
+    const saveRect = saveBar.getBoundingClientRect();
+    let top = 8;
+    let bottom = window.innerHeight - 8;
+    if (['sticky', 'fixed'].includes(getComputedStyle(nav).position) && navRect.top <= 0 && navRect.bottom > 0) top = navRect.bottom + 8;
+    if (!saveBar.contains(target) && ['sticky', 'fixed'].includes(getComputedStyle(saveBar).position) && saveRect.bottom > 0 && saveRect.top < window.innerHeight) bottom = saveRect.top - 8;
+    if (rect.top < top || rect.bottom > bottom) {
+      const visibleTop = top + Math.max(0, (bottom - top - rect.height) / 2);
+      window.scrollBy({ top: rect.top - visibleTop, behavior: 'instant' });
+    }
+  });
+});
 $('#base-url').addEventListener('change', () => {
   $('#provider-preset').value = Object.entries(presets).find(([, preset]) => preset.baseURL === $('#base-url').value)?.[0] || 'custom';
   updateFormState();

@@ -33,6 +33,12 @@ You can request one directly, for example **“Kirim stiker lucu dong”** or **
 
 The 24 transparent WebP files under `assets/stickers/` ship with the source. Keep that directory when uploading the bot. You can replace individual images using the filenames and instructions in [the sticker pack guide](assets/stickers/README.md). No additional service, API key, or runtime image converter is needed. A failed sticker upload leaves a successfully sent text reply intact; sticker-only replies have a text fallback. Emoji and kaomoji travel as ordinary text. Sticker choice and conversational phrasing depend on the configured model following the runtime instructions.
 
+## Dashboard
+
+The dashboard and sign-in screen use a dark theme with muted green accents, locally bundled Manrope typography, and clear connection states. The top navigation jumps to Connection, AI provider, Bot behavior, and Advanced. Provider and behavior settings sit side by side on wider screens and stack on phones; pairing codes retain their original black-and-white contrast.
+
+Save changes applies the full settings form. Existing configuration, masked keys, WhatsApp pairing, and reply preferences stay in place when updating. Keep the complete `src/web/public/` directory, including `fonts/`. The dashboard makes no font or CDN requests. After an update, use Ctrl+F5 if your browser still shows the previous styling.
+
 ## Hosting requirements
 
 Run the bot and dashboard together as one continuously running Node.js process with persistent writable storage. Pterodactyl / Botkeep with a Node.js 24 image supports this deployment model; keep `secrets.env` and the root `storage/` directory across restarts and redeployments.

@@ -1,5 +1,21 @@
 # Verification
 
+## Dark, minimal dashboard — 2026-10-11
+
+The existing dashboard and login now share a charcoal theme, muted green controls, local Manrope typography, top navigation, and responsive settings columns. Backend routes and saved configuration contracts remain unchanged. The only new application JavaScript keeps a focused settings control visible when native scrolling leaves it beneath a sticky overlay or exposes only a textarea caret.
+
+| Check | Result |
+| --- | --- |
+| Full suite and syntax | `npm test`: 299 passed, zero failures, cancellations, or skips. `npm run check`: all 51 JavaScript files passed. Working and staged diff checks passed. |
+| Responsive browser flows | Chromium checks passed at 1440 × 1000, 768 × 667, 360 × 667, and 320 × 560. Login/reveal, saved settings and masked keys, provider test, persona/sticker settings, dependent toggles, QR/status updates, dialogs, restart/logout, reload, and sign-out remain covered. Long model identifiers do not cause horizontal overflow. |
+| Focus regression | Native Tab initially left the desktop prompt partly above the viewport and covered by the header. CSS margins corrected desktop focus; reverse Tab on a shorter screen still exposed only the textarea's final line. The scoped visibility adjustment now passes native Tab and Shift+Tab across every enabled rendered settings control, with full bounds outside sticky overlays and the actual control resolved by center hit testing. |
+| Visual and accessibility checks | Desktop, mobile login, and pairing screenshots were inspected. QR stays opaque and unfiltered against its original white background. Axe WCAG AA audits found zero violations; no browser errors or external asset requests were detected. Manrope is registered, loaded, and used locally. |
+| Independent review | No remaining critical, important, or minor findings after the focus regression was fixed and browser evidence reviewed. Existing DOM IDs, input names, CSP, font licensing, and form/session semantics were checked. |
+| Complete source package | The 118-entry ZIP includes every dashboard asset and excludes runtime secrets/storage. Fresh `npm ci --omit=dev --ignore-scripts` and 240 packaged tests passed. The exported CLI served health, login, authenticated settings, dashboard HTML, CSS, favicon, font, and license; static asset bytes matched the archive. Overlay/startup preserved synthetic `secrets.env`, legacy `.env`, encrypted settings, custom prompt, and pairing-marker bytes. |
+| Startup smoke timing | An initial check exceeded the former ten-second startup wait with no application error. A separate launch of the same exported CLI became healthy in 5.99 seconds. The fresh smoke check passed using a condition-based 30-second limit; startup plus asset/auth checks took 6.27 seconds. This does not establish a cause for the initial timing variation. |
+
+Checks use synthetic settings, local provider/socket fixtures, and owned unpaired test processes. No live WhatsApp message or production restart was performed. Browser evidence covers Chromium; physical-device soft keyboards and Safari/Firefox were outside this verification.
+
 ## Expanded emoji, kaomoji, and sticker variety — 2026-10-11
 
 The feminine style now uses a shared guide of 60 emoji and 40 kaomoji across six moods, with 24 named sticker reactions. It suggests one to three suitable expressions in casual answers and avoids repeating recent choices. Expressions and stickers remain optional; the existing contextual delivery controls still apply. Custom/off behavior, saved settings, and provider configuration retain their existing contracts.

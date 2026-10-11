@@ -1,5 +1,14 @@
 # Implementation progress
 
+## Dark, minimal dashboard — 2026-10-11
+
+- Restyled dashboard, login, status panels, notices, and confirmation dialogs with charcoal surfaces, muted green accents, clearer typography, and consistent focus states. Desktop uses top navigation and two settings columns; smaller screens stack controls without horizontal overflow.
+- Bundled the unmodified Manrope variable font with its SIL Open Font License and provenance. Font loading uses the application origin and needs no external CDN. QR images keep their original white contrast.
+- Preserved existing settings names, login, provider tests, pairing/status updates, save behavior, persona/sticker controls, and session actions. A browser regression exposed native Tab scrolling hiding the prompt beneath the sticky header or showing only its caret. Control scroll margins and a scoped focus visibility adjustment now keep fields clear of the header and save bar.
+- Fresh verification passed 299/299 tests, all 51 JavaScript syntax checks, and staged diff checks. Integrated Chromium checks passed at 1440 × 1000, 768 × 667, 360 × 667, and 320 × 560, including forward/reverse native keyboard traversal, center hit testing, local font loading, settings persistence, and all existing session flows. No browser errors or axe WCAG AA violations were detected. Independent read-only review closed the focus finding with no remaining issues.
+- The complete 118-entry source ZIP passed a fresh production install with scripts disabled, 240 packaged tests, and actual exported CLI health/login/authenticated-settings checks. Its dashboard, CSS, favicon, font, and font license were served byte-for-byte from the archive. Overlay and startup preserved synthetic environment files, encrypted settings, custom instructions, and pairing-marker bytes.
+- The first package smoke check exceeded its former ten-second startup wait without an application error. The same exported CLI subsequently became healthy in 5.99 seconds; a fresh smoke run passed with a condition-based 30-second limit and completed startup plus asset/auth checks in 6.27 seconds. No production process was accessed or restarted. Browser coverage uses fixtures in Chromium; physical keyboards and Safari/Firefox were not checked.
+
 ## Expanded emoji, kaomoji, and sticker variety — 2026-10-11
 
 - Added a central immutable mood catalog with 60 unique emoji, 40 unique kaomoji, and 24 reaction IDs. The feminine runtime guide suggests one to three suitable casual expressions and varies recent choices; serious and document replies stay restrained. Custom/off settings retain their saved prompt contract.

@@ -3,7 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="light">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="Sign in to your Relay WhatsApp AI workspace.">
   <title>Sign in · Relay</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/styles.css">
@@ -13,7 +14,7 @@
   <main class="login-shell">
     <a class="brand login-brand" href="/login"><span class="brand-mark" aria-hidden="true">r</span><span>relay<span class="brand-subtitle">WhatsApp AI</span></span></a>
     <section class="login-card" aria-labelledby="login-title">
-      <span class="eyebrow">YOUR ASSISTANT, YOUR SPACE</span>
+      <span class="eyebrow"><span class="tiny-dot" aria-hidden="true"></span> Private workspace</span>
       <h1 id="login-title">Welcome to Relay</h1>
       <p class="intro">Sign in to connect WhatsApp and manage your AI assistant.</p>
       <form id="login-form" action="/api/auth/login" method="post">
@@ -28,7 +29,7 @@
       <p class="login-help">Use the password you chose during setup.</p>
       <noscript><p class="field-error">Enable JavaScript to use the dashboard.</p></noscript>
     </section>
-    <footer class="login-footer"><span class="tiny-dot" aria-hidden="true"></span> Self-hosted. Under your control.</footer>
+    <footer class="login-footer">Your assistant, on your server.</footer>
   </main>
 </body>
 </html>
