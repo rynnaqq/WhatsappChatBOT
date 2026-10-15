@@ -15,14 +15,25 @@ const EXPRESSION_GUIDE = EXPRESSION_GROUPS.map(({ label, emojis, kaomoji }) => (
   `${label}: emoji ${emojis.join(' ')}; kaomoji ${kaomoji.join(' ')}`
 )).join(' | ');
 
+const ACADEMIC_PRESENTATION_GUIDE = [
+  'For study, document, homework, quiz, exam, and other academic tasks, use a calm, direct voice without greetings, emoji, kaomoji, flirting, stickers, or decorative clutter.',
+  'For a multiple-choice answer, use simple WhatsApp formatting with single asterisks: *Jawaban: B. ...*, then a blank line, then *Penjelasan:* ... with a concise reason that supports the choice.',
+  'Use labels in the user\'s language: Jawaban/Penjelasan for Indonesian, Answer/Explanation for English, keeping this same structure.',
+  'When answering several numbered questions, preserve their original numbering and order and give each question its own answer-and-explanation block. For many questions, add a compact answer key first only when it is useful.',
+  'Do not use Markdown tables, HTML, or decorative headings for these answers.',
+  'Honor an explicit answer-only request or custom output format exactly. Preserve formulas, code, and quotations exactly when they matter to the answer.',
+  'Do not invent missing or unreadable options, pretend certainty when the source is unclear, or hide ambiguity; briefly identify what is missing or ambiguous.',
+].join(' ');
+
 const FEMININE_STYLE = [
   'Use a warm, feminine, and natural conversational voice while staying focused on the user\'s request.',
   'Respect the user\'s language. When the user writes casual Indonesian, reply in relaxed Indonesian.',
   'For casual messages, choose one to three context-relevant expressions from the mood guide when they fit. Mix emoji and kaomoji naturally, vary choices across recent conversation history, and avoid repeating the same default expression.',
   'Expressions are optional: never pile them up, force one into every sentence, or let them replace a useful answer.',
   `Mood guide — ${EXPRESSION_GUIDE}.`,
-  'For casual Indonesian, use gentle, supportive aku/kamu phrasing when it fits. A short line such as “Haii, aku di sini ya 🌸” is inspiration for the tone, not a canned or mandatory greeting.',
+  'For casual Indonesian, use gentle, supportive aku/kamu phrasing when it fits, without canned greetings or flirtation.',
   'Keep serious, technical, sensitive, error, and document answers clear and useful, with restrained expressions.',
+  ACADEMIC_PRESENTATION_GUIDE,
   'Do not force flirting, stereotypes, romance, or a fake human identity or relationship.',
   'Never claim you used tools, read files, or performed actions unless that actually happened.',
 ].join(' ');
@@ -120,7 +131,9 @@ function isCasualStickerContext(value) {
   const text = value.trim().toLowerCase();
   if (!text || text.length > 400) return false;
   const serious = /\b(?:api|bug|code|coding|database|debug|dokumen|document|error|exception|file|invoice|java|javascript|kode|medis|medical|doctor|dokter|diagnosis|disease|penyakit|medicine|obat|hospital|pdf|program|python|server|skrip|script|stack trace|syntax|compiler|runtime|tabel|table|teknis|technical|typescript|hukum|legal|lawyer|pengacara|polisi|court|lawsuit|uang|finance|financial|keuangan|bank|debt|hutang|pajak|investasi|saham|analisis|analyze|rangkum|summari[sz]e|meninggal|wafat|kematian|berduka|grief|grieving|died|death|dead|bereavement|suicide|suicidal|self-harm|bunuh diri|menyakiti diri)\b/u;
-  if (serious.test(text)) return false;
+  const academic = /\b(?:academic|assignment|belajar|exam|homework|kuis|latihan|mcqs?|multiple[- ]choice|pekerjaan rumah|pembahasan|pilihan ganda|quiz|schoolwork|soal|studies|study|studying|tugas|ujian)\b/u;
+  const optionLabels = new Set([...text.matchAll(/(?:^|\s)([a-e])[.)]\s*\S/gu)].map(match => match[1]));
+  if (serious.test(text) || academic.test(text) || optionLabels.size >= 2) return false;
   return /(?:\b(?:hai|halo|hello|hey|hi|pagi|siang|sore|malam|apa kabar|how are you|makasih|terima kasih|thanks|thank you|wkwk|haha|hehe|lol|senang|happy|sedih|sad|semangat|sayang|love|lucu|cute|dadah|bye)\b|[>^]-?\.<|[😊😁😂🥰😍😭😢😳💗💕✨👋])/u.test(text);
 }
 

@@ -185,7 +185,7 @@ test('legacy plaintext settings load and are encrypted on the next save', async 
   assert.equal(persisted.includes('sk-test-secret'), false);
 });
 
-test('invalid JSON is backed up before defaults replace in-memory state', async (t) => {
+test('invalid JSON is backed up before defaults with closed access replace in-memory state', async (t) => {
   const storageDir = await mkdtemp(path.join(tmpdir(), 'wa-settings-invalid-'));
   t.after(async () => {
     const { rm } = await import('node:fs/promises');
@@ -207,7 +207,7 @@ test('invalid JSON is backed up before defaults replace in-memory state', async 
   const backup = files.find((name) => name.startsWith('settings.json.invalid-'));
   assert.ok(backup);
   assert.equal(await readFile(path.join(storageDir, backup), 'utf8'), '{broken-json');
-  assert.deepEqual(repo.get(), DEFAULT_SETTINGS);
+  assert.deepEqual(repo.get(), { ...DEFAULT_SETTINGS, bot: { ...DEFAULT_SETTINGS.bot, accessMode: 'owner-only' } });
   assert.equal(warnings.length, 1);
 });
 
@@ -336,4 +336,136 @@ test('persona and sticker choices persist through masked-key saves and invalid m
     assert.equal(restored.get().bot.personaStyle, 'custom');
     assert.equal(restored.get().bot.stickerReplies, 'on-request');
   }
+});
+
+test('missing and older encrypted settings use compatible unrestricted access without rewriting saved data', async (t) => {
+  const { repo, storageDir } = await makeRepo(t);
+  assert.equal(repo.get().bot.accessMode, 'everyone');
+  assert.equal(repo.get().bot.ownerNumber, '');
+  assert.deepEqual(repo.get().bot.allowedNumbers, []);
+  await repo.save(validSettings({ bot: { systemPrompt: 'Keep my instructions.', replyTrigger: 'mention-or-reply' } }));
+  const file = path.join(storageDir, 'settings.json');
+  const older = JSON.parse(await readFile(file, 'utf8'));
+  for (const key of ['accessMode', 'ownerNumber', 'allowedNumbers']) delete older.bot[key];
+  const original = JSON.stringify(older);
+  await import('node:fs/promises').then(({ writeFile }) => writeFile(file, original));
+  const restored = new SettingsRepo({ storageDir, encryptionSecret: secret });
+  await restored.init();
+
+  assert.equal(restored.get().bot.accessMode, 'everyone');
+  assert.equal(restored.get().bot.ownerNumber, '');
+  assert.deepEqual(restored.get().bot.allowedNumbers, []);
+  assert.equal(restored.get().bot.systemPrompt, 'Keep my instructions.');
+  assert.equal(restored.get().bot.replyTrigger, 'mention-or-reply');
+  assert.equal(restored.get().ai.apiKey, 'sk-test-secret');
+  assert.equal(await readFile(file, 'utf8'), original);
+});
+
+test('owner and allowed international numbers normalize, deduplicate and persist through masked-key saves', async (t) => {
+  const { repo, storageDir } = await makeRepo(t);
+  await repo.save(validSettings({ bot: {
+    accessMode: 'allowlist', ownerNumber: '+62 (812) 3456-7890',
+    allowedNumbers: ['+62 813-0000-1111', '6281300001111', '+1 (202) 555-0123'],
+  } }));
+  const payload = repo.getPublic();
+  assert.equal(payload.bot.ownerNumber, '6281234567890');
+  assert.deepEqual(payload.bot.allowedNumbers, ['6281300001111', '12025550123']);
+  payload.ai.model = 'changed-model';
+  await repo.save(payload);
+  const restored = new SettingsRepo({ storageDir, encryptionSecret: secret });
+  await restored.init();
+  assert.equal(restored.get().bot.accessMode, 'allowlist');
+  assert.equal(restored.get().bot.ownerNumber, '6281234567890');
+  assert.deepEqual(restored.get().bot.allowedNumbers, ['6281300001111', '12025550123']);
+  assert.equal(restored.get().ai.apiKey, 'sk-test-secret');
+  assert.equal(restored.getPublic().ai.apiKey, MASKED_API_KEY);
+  const copy = restored.getPublic();
+  copy.bot.allowedNumbers.push('442079460123');
+  assert.equal(restored.get().bot.allowedNumbers.length, 2);
+});
+
+test('restricted access requires an owner while an empty additional allowlist is valid', async (t) => {
+  const { repo } = await makeRepo(t);
+  for (const accessMode of ['owner-only', 'allowlist']) {
+    await assert.rejects(repo.save(validSettings({ bot: { accessMode, ownerNumber: '', allowedNumbers: [] } })), error => {
+      assert.ok(error instanceof SettingsValidationError);
+      assert.deepEqual(Object.keys(error.fields), ['bot.ownerNumber']);
+      return true;
+    });
+    await repo.save(validSettings({ bot: { accessMode, ownerNumber: '6281234567890', allowedNumbers: [] } }));
+    assert.equal(repo.get().bot.accessMode, accessMode);
+    assert.deepEqual(repo.get().bot.allowedNumbers, []);
+  }
+});
+
+test('invalid access settings leave both active and persisted policy unchanged', async (t) => {
+  const { repo, storageDir } = await makeRepo(t);
+  await repo.save(validSettings({ bot: { accessMode: 'allowlist', ownerNumber: '6281234567890', allowedNumbers: ['6281300001111'] } }));
+  const file = path.join(storageDir, 'settings.json');
+  const before = await readFile(file, 'utf8');
+  const invalid = [
+    ['accessMode', 'unknown'], ['accessMode', null], ['accessMode', 1],
+    ['ownerNumber', '081234567890'], ['ownerNumber', '6281234567890@s.whatsapp.net'],
+    ['ownerNumber', '62812 OR 12025550123'], ['ownerNumber', 6281234567890],
+    ['ownerNumber', '1'.repeat(65)], ['ownerNumber', '123456'], ['ownerNumber', '1234567890123456'],
+    ['allowedNumbers', '6281300001111'], ['allowedNumbers', null], ['allowedNumbers', [6281300001111]], ['allowedNumbers', Array(1)],
+    ['allowedNumbers', ['']], ['allowedNumbers', ['+62 813abc00001111']], ['allowedNumbers', ['6281300001111@g.us']],
+    ['allowedNumbers', Array.from({ length: 101 }, (_, index) => `62813${String(index).padStart(8, '0')}`)],
+  ];
+  for (const [key, value] of invalid) {
+    const payload = repo.getPublic();
+    payload.bot[key] = value;
+    await assert.rejects(repo.save(payload), error => {
+      assert.ok(error instanceof SettingsValidationError);
+      assert.deepEqual(Object.keys(error.fields), [`bot.${key}`]);
+      return true;
+    });
+    assert.equal(repo.get().bot.accessMode, 'allowlist');
+    assert.equal(repo.get().bot.ownerNumber, '6281234567890');
+    assert.deepEqual(repo.get().bot.allowedNumbers, ['6281300001111']);
+    assert.equal(await readFile(file, 'utf8'), before);
+  }
+});
+
+test('older clients omitting new fields cannot silently reset an existing access policy', async (t) => {
+  const { repo } = await makeRepo(t);
+  await repo.save(validSettings({ bot: { accessMode: 'allowlist', ownerNumber: '6281234567890', allowedNumbers: ['6281300001111'] } }));
+  await repo.save(validSettings({ ai: { apiKey: MASKED_API_KEY }, bot: { commandPrefix: '?' } }));
+  assert.equal(repo.get().bot.accessMode, 'allowlist');
+  assert.equal(repo.get().bot.ownerNumber, '6281234567890');
+  assert.deepEqual(repo.get().bot.allowedNumbers, ['6281300001111']);
+  assert.equal(repo.get().bot.commandPrefix, '?');
+  assert.equal(repo.get().ai.apiKey, 'sk-test-secret');
+});
+
+test('invalid stored settings recover with bot access closed until the owner reconfigures them', async (t) => {
+  const { repo, storageDir } = await makeRepo(t);
+  await repo.save(validSettings());
+  const file = path.join(storageDir, 'settings.json');
+  const invalid = JSON.parse(await readFile(file, 'utf8'));
+  invalid.bot.accessMode = 'allowlist';
+  invalid.bot.ownerNumber = 'not-a-phone';
+  invalid.bot.allowedNumbers = [];
+  const original = JSON.stringify(invalid);
+  await import('node:fs/promises').then(({ writeFile }) => writeFile(file, original));
+  const restored = new SettingsRepo({ storageDir, encryptionSecret: secret, logger: { warn() {} } });
+  await restored.init();
+  assert.equal(restored.get().bot.accessMode, 'owner-only');
+  assert.equal(restored.get().bot.ownerNumber, '');
+  assert.deepEqual(restored.get().bot.allowedNumbers, []);
+  const backup = (await readdir(storageDir)).find(name => name.startsWith('settings.json.invalid-'));
+  assert.ok(backup);
+  assert.equal(await readFile(path.join(storageDir, backup), 'utf8'), original);
+  const secondRestart = new SettingsRepo({ storageDir, encryptionSecret: secret, logger: { warn() {} } });
+  await secondRestart.init();
+  assert.equal(secondRestart.get().bot.accessMode, 'owner-only');
+  assert.equal(secondRestart.get().bot.ownerNumber, '');
+  const repaired = secondRestart.get();
+  repaired.ai.apiKey = 'synthetic-reconfigured-key';
+  repaired.bot.accessMode = 'everyone';
+  await secondRestart.save(repaired);
+  const configuredRestart = new SettingsRepo({ storageDir, encryptionSecret: secret });
+  await configuredRestart.init();
+  assert.equal(configuredRestart.get().bot.accessMode, 'everyone');
+  assert.equal(configuredRestart.get().ai.apiKey, 'synthetic-reconfigured-key');
 });

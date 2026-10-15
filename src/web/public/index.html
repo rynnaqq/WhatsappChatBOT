@@ -19,6 +19,7 @@
         <a href="#connection" class="nav-link active"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11.5a8 8 0 0 1-8 8H5l-3 2v-7a8 8 0 1 1 18-3Z"/><path d="M8 10h8M8 14h5"/></svg> Connection</a>
         <a href="#provider" class="nav-link"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 9 5v8l-9 5-9-5V8l9-5ZM3 8l9 5 9-5M12 13v8M7.5 5.5l9 5"/></svg> AI provider</a>
         <a href="#behavior" class="nav-link"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="7" width="18" height="14" rx="4"/><path d="M12 3v4M8 16h8M8 11v1M16 11v1"/></svg> Bot behavior</a>
+        <a href="#access" class="nav-link"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 8 3v6c0 4-3 7-8 9-5-2-8-5-8-9V6l8-3Z"/><path d="m8 12 3 3 5-6"/></svg> Access</a>
         <a href="#advanced" class="nav-link"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h8m4 0h4M4 12h3m4 0h9M4 18h10m4 0h2"/><circle cx="14" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="16" cy="18" r="2"/></svg> Advanced</a>
       </nav>
       <div class="operator"><span class="avatar" aria-hidden="true">A</span><span class="operator-label">Administrator</span><button id="sign-out" class="text-button" type="button">Sign out <span aria-hidden="true">↗</span></button></div>
@@ -49,7 +50,7 @@
           </div>
         </section>
 
-        <div class="settings-summary" aria-label="Saved configuration"><div><span class="field-caption">MODEL</span><strong id="model-summary">Loading…</strong></div><div><span class="field-caption">CHAT SCOPE</span><strong id="scope-summary">Loading…</strong></div><div><span class="field-caption">CONVERSATION MEMORY</span><strong id="memory-summary">Loading…</strong></div></div>
+        <div class="settings-summary" aria-label="Saved configuration"><div><span class="field-caption">MODEL</span><strong id="model-summary">Loading…</strong></div><div><span class="field-caption">CHAT SCOPE</span><strong id="scope-summary">Loading…</strong></div><div><span class="field-caption">CONVERSATION MEMORY</span><strong id="memory-summary">Loading…</strong></div><div><span class="field-caption">BOT ACCESS</span><strong id="access-summary">Loading…</strong></div></div>
 
         <form id="settings-form" action="/api/settings" method="post">
           <section id="provider" class="card settings-card" aria-labelledby="provider-title">
@@ -81,7 +82,7 @@
               <legend class="visually-hidden">Bot behavior settings</legend>
               <div class="field"><label for="system-prompt">System prompt / persona <span id="prompt-count" class="input-tag">0 / 4,000</span></label><textarea id="system-prompt" name="bot.systemPrompt" rows="4" maxlength="4000" aria-describedby="prompt-help"></textarea><p id="prompt-help" class="hint">Give your assistant a role, tone, and any instructions it should follow.</p></div>
               <div class="form-grid">
-                <div class="field"><label for="persona-style">Reply style</label><select id="persona-style" name="bot.personaStyle" required aria-describedby="persona-help"><option value="feminine">Feminine &amp; warm</option><option value="custom">Custom prompt only</option></select><p id="persona-help" class="hint">Add a warm, feminine voice with 60 emoji and 40 kaomoji choices to suit the mood. Your prompt stays saved.</p></div>
+                <div class="field"><label for="persona-style">Reply style</label><select id="persona-style" name="bot.personaStyle" required aria-describedby="persona-help"><option value="feminine">Feminine &amp; warm</option><option value="custom">Custom prompt only</option></select><p id="persona-help" class="hint">Warm and expressive for casual chat; clear answers with separate explanations for schoolwork. Your prompt stays saved.</p></div>
                 <div class="field"><label for="sticker-replies">Sticker replies</label><select id="sticker-replies" name="bot.stickerReplies" required aria-describedby="sticker-help"><option value="contextual">Occasionally, to suit the chat</option><option value="on-request">Only when requested</option><option value="off">Off</option></select><p id="sticker-help" class="hint">24 reaction stickers. Automatic stickers have a two-minute pause per chat; direct requests can still be answered.</p></div>
               </div>
               <div class="field"><label for="reply-trigger">Reply trigger</label><select id="reply-trigger" name="bot.replyTrigger" required aria-describedby="trigger-help"><option value="prefix">Command prefix</option><option value="mention-or-reply">Private chats + group tags/replies</option></select><p id="trigger-help" class="hint">Choose which incoming messages your assistant answers.</p></div>
@@ -97,8 +98,23 @@
             </fieldset>
           </section>
 
+          <section id="access" class="card settings-card" aria-labelledby="access-title">
+            <div class="section-heading"><div><span class="section-number">04</span><h2 id="access-title">Who can use the bot</h2></div><span class="quiet-badge">Owner & allowed numbers</span></div>
+            <p class="section-intro">Choose who can chat with your assistant in private messages and groups. Your saved chat scope and reply trigger rules still apply.</p>
+            <fieldset id="access-fields" disabled>
+              <legend class="visually-hidden">Bot user access</legend>
+              <div class="form-grid">
+                <div>
+                  <div class="field"><label for="access-mode">Bot access</label><select id="access-mode" name="bot.accessMode" required aria-describedby="access-mode-help"><option value="everyone">Everyone</option><option value="owner-only">Owner only</option><option value="allowlist">Owner + allowed numbers</option></select><p id="access-mode-help" class="hint">Everyone can use the bot until you select a restricted mode and save.</p></div>
+                  <div class="field"><label for="owner-number">Owner WhatsApp number <span id="owner-number-note" class="required-note">optional for Everyone</span></label><input id="owner-number" name="bot.ownerNumber" type="tel" inputmode="tel" maxlength="64" autocomplete="tel" spellcheck="false" autocapitalize="off" placeholder="+6281234567890" aria-describedby="owner-number-help"><p id="owner-number-help" class="hint">Your separate WhatsApp number, with country code (62 for Indonesia, not 08). The owner is always allowed in restricted modes.</p></div>
+                </div>
+                <div class="field"><label for="allowed-numbers">Allowed WhatsApp numbers <span class="input-tag">up to 100</span></label><textarea id="allowed-numbers" name="bot.allowedNumbers" rows="5" maxlength="6500" inputmode="tel" autocomplete="off" spellcheck="false" autocapitalize="off" placeholder="+6281300001111&#10;+6281400002222" aria-describedby="allowed-numbers-help"></textarea><p id="allowed-numbers-help" class="hint">One international number per line, or separate numbers with commas. Used only in Owner + allowed numbers mode. Leave empty to allow only the owner; saved numbers stay available when switching modes.</p></div>
+              </div>
+            </fieldset>
+          </section>
+
           <section id="advanced" class="card settings-card" aria-labelledby="advanced-title">
-            <div class="section-heading"><div><span class="section-number">04</span><h2 id="advanced-title">Advanced</h2></div><span class="quiet-badge">Limits & privacy</span></div>
+            <div class="section-heading"><div><span class="section-number">05</span><h2 id="advanced-title">Advanced</h2></div><span class="quiet-badge">Limits & privacy</span></div>
             <p class="section-intro">Keep requests, incoming media, and chat activity within sensible limits.</p>
             <fieldset id="advanced-fields" disabled>
               <legend class="visually-hidden">Advanced limits and privacy</legend>

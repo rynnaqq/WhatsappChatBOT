@@ -2,6 +2,7 @@ import { jidNormalizedUser } from '@whiskeysockets/baileys';
 
 import { downloadImageMessage, downloadIncomingMedia, MediaUserFacingError } from './mediaService.js';
 import { loadSticker } from './stickerService.js';
+import { isSenderAuthorized } from './userAccess.js';
 import { isStickerRequest, stickerAllowed, stickerFallback } from '../services/replyPersona.js';
 
 const GENERIC_FAILURE = "Sorry, I couldn't process that request right now.";
@@ -208,6 +209,25 @@ function userMessage(error) {
   return GENERIC_FAILURE;
 }
 
+function policyValueFingerprint(value) {
+  if (value === undefined) return 'undefined';
+  if (value === null) return 'null';
+  if (typeof value === 'string') return `string:${value.length}:${value}`;
+  if (typeof value !== 'object') return `${typeof value}:${String(value)}`;
+  if (!Array.isArray(value)) return 'object';
+  return `array:${value.length}:[${value.map(policyValueFingerprint).join(',')}]`;
+}
+
+function accessPolicyFingerprint(settings) {
+  const bot = settings?.bot;
+  if (!bot || typeof bot !== 'object' || Array.isArray(bot)) {
+    return `bot:${policyValueFingerprint(bot)}`;
+  }
+  return [bot.accessMode, bot.ownerNumber, bot.allowedNumbers]
+    .map(policyValueFingerprint)
+    .join('|');
+}
+
 export function createMessageHandler({
   settingsRepo,
   aiService,
@@ -215,6 +235,7 @@ export function createMessageHandler({
   downloadImage = downloadImageMessage,
   downloadMedia = downloadIncomingMedia,
   now = Date.now,
+  senderLookupTimeoutMs,
 }) {
   const queues = new Map();
   const pending = new Map();
@@ -222,6 +243,28 @@ export function createMessageHandler({
   const rateWindows = new Map();
   const stickerTimes = new Map();
   let closed = false;
+
+  async function senderAllowed(sock, msg, settings) {
+    try {
+      const authorize = (current) => isSenderAuthorized({
+        sock,
+        message: msg,
+        settings: current,
+        ...(senderLookupTimeoutMs === undefined ? {} : { timeoutMs: senderLookupTimeoutMs }),
+      });
+      const initial = settings ?? settingsRepo.get();
+      const initialFingerprint = accessPolicyFingerprint(initial);
+      const initiallyAllowed = await authorize(initial);
+      const latest = settingsRepo.get();
+      const latestFingerprint = accessPolicyFingerprint(latest);
+      if (latestFingerprint === initialFingerprint) return initiallyAllowed;
+
+      const currentlyAllowed = await authorize(latest);
+      return accessPolicyFingerprint(settingsRepo.get()) === latestFingerprint && currentlyAllowed;
+    } catch {
+      return false;
+    }
+  }
 
   function pruneDedup(currentTime) {
     for (const [key, seenAt] of dedup) {
@@ -265,18 +308,23 @@ export function createMessageHandler({
   }
 
   async function process(sock, msg, chatId, text, mediaKind, usesVisionControls, config, isActive) {
-    if (closed || !isActive()) return;
+    const canContinue = async () => {
+      if (closed || !isActive()) return false;
+      const allowed = await senderAllowed(sock, msg);
+      return allowed && !closed && isActive();
+    };
+    if (!(await canContinue())) return;
     const messageId = msg.key?.id;
     let typingStarted = false;
     let stage = 'read_receipt';
     try {
       if (config.bot.markRead) await sock.readMessages([msg.key]);
-      if (closed || !isActive()) return;
+      if (!(await canContinue())) return;
       if (config.bot.typingIndicator) {
         stage = 'typing';
         await sock.sendPresenceUpdate('composing', chatId);
         typingStarted = true;
-        if (closed || !isActive()) return;
+        if (!(await canContinue())) return;
       }
       let attachment;
       if (mediaKind) {
@@ -305,9 +353,9 @@ export function createMessageHandler({
         } else {
           attachment = await downloadMedia(msg, sock, options);
         }
-        if (closed || !isActive()) return;
+        if (!(await canContinue())) return;
       }
-      if (closed || !isActive()) return;
+      if (!(await canContinue())) return;
       stage = 'ai_request';
       const input = {
         chatId,
@@ -319,7 +367,7 @@ export function createMessageHandler({
       };
       const reply = typeof aiService.replyWithMedia === 'function'
         ? await aiService.replyWithMedia(input) : await aiService.reply(input);
-      if (closed || !isActive()) return;
+      if (!(await canContinue())) return;
       const replyText = typeof reply === 'string' ? reply : reply?.text;
       const stickerId = typeof reply === 'object' ? reply?.stickerId : null;
       let textSent = false;
@@ -328,15 +376,16 @@ export function createMessageHandler({
         stage = 'reply_send';
         await sock.sendMessage(chatId, { text: replyText }, { quoted: msg });
         textSent = true;
+        if (!(await canContinue())) return;
       }
       const lastSticker = stickerTimes.get(chatId);
       const canSendSticker = stickerId && stickerAllowed(config, { text, attachment })
         && (isStickerRequest(text) || lastSticker === undefined || now() - lastSticker >= STICKER_COOLDOWN_MS);
-      if (canSendSticker && !closed && isActive()) {
+      if (canSendSticker && await canContinue()) {
         stage = 'sticker_send';
         try {
           const sticker = await loadSticker(stickerId);
-          if (sticker && !closed && isActive()) {
+          if (sticker && await canContinue()) {
             await sock.sendMessage(chatId, { sticker }, { quoted: msg });
             stickerSent = true;
             stickerTimes.delete(chatId);
@@ -347,20 +396,21 @@ export function createMessageHandler({
           logger?.warn?.({ event: 'sticker_reply_failed', messageId }, 'Sticker reply could not be sent.');
         }
       }
-      if (!textSent && !stickerSent && !closed && isActive()) {
+      if (!textSent && !stickerSent && await canContinue()) {
         stage = 'reply_send';
         await sock.sendMessage(chatId, { text: stickerFallback(stickerId) }, { quoted: msg });
         textSent = true;
       }
-      if (textSent || stickerSent) {
+      if ((textSent || stickerSent) && await canContinue()) {
         logger?.info?.({ event: 'message_replied', messageId, stickerSent }, 'Message replied');
       }
     } catch (error) {
+      if (!(await canContinue())) return;
       const reason = userMessage(error);
       const errorCode = error?.code === 'AI_USER_FACING' || error?.code === 'MEDIA_USER_FACING'
         ? error.code : 'INTERNAL_FAILURE';
       logger?.warn?.({ event: 'message_failed', messageId, stage, errorCode, reason }, 'Message processing failed');
-      if (!closed && isActive()) {
+      if (await canContinue()) {
         await sock.sendMessage(chatId, { text: reason }, { quoted: msg }).catch(() => {});
       }
     } finally {
@@ -378,10 +428,17 @@ export function createMessageHandler({
       const chatId = msg?.key?.remoteJid;
       const messageId = msg?.key?.id;
       if (!messageId || isIgnoredJid(chatId, sock)) continue;
+      let currentSettings;
+      try {
+        currentSettings = settingsRepo.get();
+      } catch {
+        continue;
+      }
+      if (!(await senderAllowed(sock, msg, currentSettings)) || closed || !isActive()) continue;
       const content = unwrap(msg.message);
       const extracted = extract(content);
       if (!extracted) continue;
-      const config = safeSettings(settingsRepo.get());
+      const config = safeSettings(currentSettings);
       const isGroup = chatId.endsWith('@g.us');
       if (isGroup && (config.bot.privateChatsOnly || !config.bot.groupRepliesEnabled)) continue;
       const sentAt = timestampMs(msg.messageTimestamp);

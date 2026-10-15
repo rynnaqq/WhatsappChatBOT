@@ -157,6 +157,43 @@ test('settings validate full payloads, mask keys, and preserve masked saved keys
   assert.equal(f.settingsRepo.get().ai.temperature, 0.7);
 });
 
+test('access settings require dashboard authentication, normalize phone lists and preserve policy on failed or older saves', async (t) => {
+  const f = await fixture(t);
+  const payload = f.settingsRepo.get();
+  payload.ai.apiKey = 'synthetic-access-provider-key';
+  Object.assign(payload.bot, {
+    accessMode: 'allowlist', ownerNumber: '+62 812-3456-7890',
+    allowedNumbers: ['+62 (813) 0000-1111', '6281300001111'],
+  });
+  assert.equal((await f.post('/api/settings', payload)).status, 401);
+  assert.equal((await f.request('/api/settings')).status, 401);
+  const { cookie } = await f.login();
+  const response = await f.post('/api/settings', payload, cookie);
+  assert.equal(response.status, 200);
+  const saved = await response.json();
+  assert.equal(saved.bot.accessMode, 'allowlist');
+  assert.equal(saved.bot.ownerNumber, '6281234567890');
+  assert.deepEqual(saved.bot.allowedNumbers, ['6281300001111']);
+  assert.equal(saved.ai.apiKey, '********');
+  const invalid = structuredClone(saved);
+  invalid.bot.allowedNumbers = ['not-a-phone-private-content'];
+  const rejected = await f.post('/api/settings', invalid, cookie);
+  assert.equal(rejected.status, 400);
+  const problem = await rejected.json();
+  assert.deepEqual(Object.keys(problem.fields), ['bot.allowedNumbers']);
+  assert.equal(JSON.stringify(problem).includes('not-a-phone-private-content'), false);
+  const olderPayload = structuredClone(saved);
+  for (const name of ['accessMode', 'ownerNumber', 'allowedNumbers']) delete olderPayload.bot[name];
+  olderPayload.bot.memoryLimit = 8;
+  assert.equal((await f.post('/api/settings', olderPayload, cookie)).status, 200);
+  const loaded = await (await f.request('/api/settings', { headers: { cookie } })).json();
+  assert.equal(loaded.bot.accessMode, 'allowlist');
+  assert.equal(loaded.bot.ownerNumber, '6281234567890');
+  assert.deepEqual(loaded.bot.allowedNumbers, ['6281300001111']);
+  assert.equal(loaded.bot.memoryLimit, 8);
+  assert.equal(f.settingsRepo.get().ai.apiKey, 'synthetic-access-provider-key');
+});
+
 test('AI connection tests show safe provider diagnostics using the saved configuration', async (t) => {
   const requests = [];
   const provider = http.createServer(async (request, response) => {

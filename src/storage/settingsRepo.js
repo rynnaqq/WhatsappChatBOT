@@ -1,8 +1,9 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
-import { readFile, rename } from 'node:fs/promises';
+import { readFile, readdir, rename } from 'node:fs/promises';
 import path from 'node:path';
 
 import { ensurePrivateDirectory, SerializedQueue, writeJsonAtomic } from './jsonStore.js';
+import { ACCESS_MODES, MAX_ALLOWED_NUMBERS, normalizePhoneNumber } from '../config/access.js';
 
 export const MASKED_API_KEY = '********';
 
@@ -29,6 +30,9 @@ export const DEFAULT_SETTINGS = Object.freeze({
     ].join('\n'),
     personaStyle: 'feminine',
     stickerReplies: 'contextual',
+    accessMode: 'everyone',
+    ownerNumber: '',
+    allowedNumbers: Object.freeze([]),
     replyTrigger: 'prefix',
     commandPrefix: '!',
     memoryLimit: 6,
@@ -48,7 +52,7 @@ const AI_KEYS = new Set([
   'mediaEnabled', 'attachmentTransport', 'timeoutSeconds', 'maxImageMB', 'maxFileMB',
 ]);
 const BOT_KEYS = new Set([
-  'systemPrompt', 'personaStyle', 'stickerReplies', 'replyTrigger', 'commandPrefix', 'memoryLimit', 'privateChatsOnly',
+  'systemPrompt', 'personaStyle', 'stickerReplies', 'accessMode', 'ownerNumber', 'allowedNumbers', 'replyTrigger', 'commandPrefix', 'memoryLimit', 'privateChatsOnly',
   'groupRepliesEnabled', 'typingIndicator', 'maxMessageAgeSeconds', 'markRead',
   'rateLimitPerMinute',
 ]);
@@ -93,7 +97,13 @@ export class SettingsRepo {
       } catch (error) {
         if (error?.code !== 'ENOENT') throw error;
         this.#settings = clone(DEFAULT_SETTINGS);
-        this.#logger.warn?.({ event: 'settings_missing' }, 'Settings file is missing; using defaults.');
+        const names = await readdir(path.dirname(this.#filePath));
+        if (names.some(name => name.startsWith(`${path.basename(this.#filePath)}.invalid-`))) {
+          this.#settings.bot.accessMode = 'owner-only';
+          this.#logger.warn?.({ event: 'settings_recovery_required' }, 'Settings recovery is incomplete; reconfigure the owner and provider in the dashboard.');
+        } else {
+          this.#logger.warn?.({ event: 'settings_missing' }, 'Settings file is missing; using defaults.');
+        }
         return this.get();
       }
 
@@ -108,6 +118,8 @@ export class SettingsRepo {
       } catch (error) {
         const backupPath = await this.#backupInvalidFile();
         this.#settings = clone(DEFAULT_SETTINGS);
+        // Invalid persisted policy must not silently broaden bot access during recovery.
+        this.#settings.bot.accessMode = 'owner-only';
         this.#logger.warn?.(
           { event: 'settings_invalid', backupPath, reason: safeReason(error) },
           'Settings file is invalid; using defaults.',
@@ -130,6 +142,11 @@ export class SettingsRepo {
   async save(fullPayload) {
     return this.#queue.run(async () => {
       const payload = clonePayload(fullPayload);
+      if (isPlainObject(payload?.bot)) {
+        for (const name of ['accessMode', 'ownerNumber', 'allowedNumbers']) {
+          if (payload.bot[name] === undefined) payload.bot[name] = clone(this.#settings.bot[name]);
+        }
+      }
       if (payload?.ai?.apiKey === MASKED_API_KEY) {
         payload.ai.apiKey = this.#settings.ai.apiKey;
       }
@@ -238,6 +255,9 @@ function validateAndNormalize(input, { maxTokensCeiling, allowEmptyApiKey, addit
       systemPrompt: bot.systemPrompt,
       personaStyle: additionsOptional && bot.personaStyle === undefined ? DEFAULT_SETTINGS.bot.personaStyle : bot.personaStyle,
       stickerReplies: additionsOptional && bot.stickerReplies === undefined ? DEFAULT_SETTINGS.bot.stickerReplies : bot.stickerReplies,
+      accessMode: additionsOptional && bot.accessMode === undefined ? DEFAULT_SETTINGS.bot.accessMode : bot.accessMode,
+      ownerNumber: additionsOptional && bot.ownerNumber === undefined ? DEFAULT_SETTINGS.bot.ownerNumber : bot.ownerNumber,
+      allowedNumbers: additionsOptional && bot.allowedNumbers === undefined ? [] : bot.allowedNumbers,
       replyTrigger: additionsOptional && bot.replyTrigger === undefined ? DEFAULT_SETTINGS.bot.replyTrigger : bot.replyTrigger,
       commandPrefix: bot.commandPrefix,
       memoryLimit: bot.memoryLimit,
@@ -279,6 +299,26 @@ function validateAndNormalize(input, { maxTokensCeiling, allowEmptyApiKey, addit
   }
   if (!['contextual', 'on-request', 'off'].includes(normalized.bot.stickerReplies)) {
     fields['bot.stickerReplies'] = 'Choose occasional, on request, or off.';
+  }
+  if (!ACCESS_MODES.includes(normalized.bot.accessMode)) {
+    fields['bot.accessMode'] = 'Choose everyone, owner only, or owner and allowed numbers.';
+  }
+  const owner = normalizePhoneNumber(normalized.bot.ownerNumber);
+  if (typeof normalized.bot.ownerNumber !== 'string' || normalized.bot.ownerNumber.length > 64
+      || normalized.bot.ownerNumber.trim() !== '' && owner === null) {
+    fields['bot.ownerNumber'] = 'Use an international phone number, such as +6281234567890.';
+  } else if (normalized.bot.accessMode !== 'everyone' && ACCESS_MODES.includes(normalized.bot.accessMode) && !owner) {
+    fields['bot.ownerNumber'] = 'An owner number is required for restricted access.';
+  } else {
+    normalized.bot.ownerNumber = owner ?? '';
+  }
+  const allowed = normalized.bot.allowedNumbers;
+  if (!Array.isArray(allowed) || allowed.length > MAX_ALLOWED_NUMBERS) {
+    fields['bot.allowedNumbers'] = `Enter a list of at most ${MAX_ALLOWED_NUMBERS} international phone numbers.`;
+  } else {
+    const numbers = Array.from(allowed, normalizePhoneNumber);
+    if (numbers.includes(null)) fields['bot.allowedNumbers'] = 'Every entry must be an international phone number, such as +6281234567890.';
+    else normalized.bot.allowedNumbers = [...new Set(numbers)];
   }
   if (!['prefix', 'mention-or-reply'].includes(normalized.bot.replyTrigger)) {
     fields['bot.replyTrigger'] = 'Choose command prefix or tags and replies only.';

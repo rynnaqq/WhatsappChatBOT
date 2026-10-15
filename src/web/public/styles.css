@@ -126,13 +126,13 @@
   .phone-outline::after { content: ''; position: absolute; inset-block-end: 4px; inline-size: 8px; block-size: 2px; background: #a7c5b2; border-radius: 2px; }
   .phone-outline > span { inline-size: 12px; block-size: 12px; border: 1.5px solid #a7c5b2; border-radius: 3px; }
   .qr-caption { color: var(--muted); font-size: 10px; margin-block-start: 11px; line-height: 1.7; }
-  .settings-summary { display: grid; grid-template-columns: 1.2fr 1fr 1fr; margin-block: 20px 30px; padding: 22px 26px; border: 1px solid var(--line); border-radius: 10px; background: #151c17; gap: 24px; }
+  .settings-summary { display: grid; grid-template-columns: 1.2fr 1fr 1fr 1fr; margin-block: 20px 30px; padding: 22px 26px; border: 1px solid var(--line); border-radius: 10px; background: #151c17; gap: 24px; }
   .settings-summary > div { min-inline-size: 0; }
   .settings-summary > div:not(:first-child) { border-inline-start: 1px solid #3f5144; padding-inline-start: 24px; }
   .settings-summary strong { display: block; color: #d9e5de; font-size: 12px; font-weight: 600; margin-block-start: 6px; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
   #settings-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 24px; }
   .settings-card { padding: 26px 28px 28px; }
-  #advanced { grid-column: 1 / -1; }
+  #access, #advanced { grid-column: 1 / -1; }
   #advanced .form-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .quiet-badge { color: var(--muted); font-size: 10px; font-weight: 500; letter-spacing: .1px; }
   .section-intro { margin-block: 13px 26px; font-size: 12px; line-height: 1.8; color: var(--muted); max-inline-size: 65ch; }

@@ -19,13 +19,45 @@ Open **http://localhost:3000**. The setup command creates a private `secrets.env
 3. From a different WhatsApp account, send `!Hello`. With the default prefix, messages without `!` are ignored.
 4. For images, stickers, and visual PDF reading, enable **Vision enabled** and use a vision-capable model. For documents, voice notes, audio, and videos, enable **Files, audio and video**. PDF tables and scans need both controls for local page rendering. In prefix mode, include the prefix in the caption; use the private-chat trigger below to send attachments directly without captions.
 
-To answer ordinary private messages without commands while keeping groups addressed to the bot, set **Bot behavior → Reply trigger → Private chats + group tags/replies** and save. Every eligible private message is accepted, including enabled attachments with or without captions. In a group, tag the linked WhatsApp account in the caption or send the attachment as a reply to a message from that account in the same chat. Group tags of other people and replies to other people are ignored; a bare group tag with no question or attachment is ignored. Existing settings saved as the former **Tags or replies only** mode automatically use this updated behavior.
+To answer ordinary private messages without commands while keeping groups addressed to the bot, set **Bot behavior → Reply trigger → Private chats + group tags/replies** and save. Eligible private messages from permitted users are accepted, including enabled attachments with or without captions. In a group, tag the linked WhatsApp account in the caption or send the attachment as a reply to a message from that account in the same chat. Group tags of other people and replies to other people are ignored; a bare group tag with no question or attachment is ignored. Existing settings saved as the former **Tags or replies only** mode automatically use this updated behavior.
 
 The server binds to `127.0.0.1` by default. Set `HOST=0.0.0.0` to reach it from your LAN. Use HTTPS when exposing the dashboard beyond your local machine.
+
+## Owner and allowed users
+
+Open **Access → Who can use the bot** in the dashboard:
+
+| Bot access | Who may send requests |
+| --- | --- |
+| Everyone | All users who meet your existing chat and trigger rules. This is the compatible default for new and older valid settings. |
+| Owner only | Only the configured owner's WhatsApp number. |
+| Owner + allowed numbers | The owner and numbers in the saved allowlist. An empty list permits only the owner. |
+
+For restricted access, enter your **Owner WhatsApp number**, add the additional numbers you want to permit, choose the mode, and **Save changes**. Use a separate account from the paired bot: messages sent by the bot's own account remain ignored. International numbers need their country code, such as `+6281234567890`, not `081234567890`. Spaces, parentheses, and hyphens are accepted and removed when saved. The list accepts one number per line or comma/semicolon separators, with at most 100 numbers; duplicates are removed. Switching modes retains the owner and list for later use. The overview shows the saved access mode.
+
+Permissions apply to the incoming user in both private chats and groups. Adding a group or quoting/tagging an owner cannot grant access. The owner still follows the saved reply trigger, private/group settings, freshness, and rate limits. Unauthorized messages are ignored before read receipts, typing, file downloads, and AI requests. Pending work is checked again after asynchronous steps and before delivery when a number is removed. An already dispatched provider request is not retroactively cancelled.
+
+WhatsApp phone-number aliases and known LID mappings are supported. Numeric LIDs are never treated as phone numbers; a LID-only sender without a known phone mapping is ignored until an identity can be established. Access settings control WhatsApp use and do not grant dashboard sign-in. Existing saved instructions, keys, pairing, and triggers stay intact. Saves from older clients cannot silently clear an existing access policy. Invalid stored settings are backed up and recover with access closed until you reconfigure the owner/provider in the dashboard.
 
 ## Voice and outgoing stickers
 
 **Bot behavior → Reply style → Feminine & warm** adds a warm, natural feminine voice to your saved instructions. Its mood guide offers **60 emoji and 40 kaomoji**, grouped into greetings, playful joy, affection, comfort, reactions, and cozy everyday chat. Casual replies are guided to choose one to three suitable expressions, vary their recent choices, and mix emoji with kaomoji such as `>.<`, `(≧▽≦)`, and `(｡•ᴗ•｡)` naturally. The assistant follows the user's language and keeps document, technical, and serious answers focused. Choose **Custom prompt only** to use your saved voice without this extra style. Updating an older installation enables the feminine style without replacing its saved system prompt or provider credentials.
+
+For schoolwork and multiple-choice questions, this style asks for direct answers with WhatsApp-native labels, separate explanations, and a blank line between blocks:
+
+```text
+1.
+*Jawaban: B. Fotosintesis*
+
+*Penjelasan:* Tumbuhan menggunakan energi cahaya untuk membentuk glukosa.
+
+2.
+*Jawaban: C. ...*
+
+*Penjelasan:* Alasan pilihan C benar.
+```
+
+Original numbering and order are preserved; long sets may start with a compact answer key. Explicit requests such as “huruf jawabannya saja” or a custom format take precedence. The guide avoids greetings, decorative headings, tables, emoji, and kaomoji around academic answers, and asks the model to flag unreadable or missing options. Automatic stickers are also suppressed for recognized homework/quiz/exam contexts. A directly requested sticker still follows the existing sticker setting. Formatting and factual correctness depend on the configured model; the application preserves its answer text without rewriting formulas, code, or quotations. For long answer sets, increase **Max output tokens** if the existing cap cuts the reply short.
 
 **Sticker replies → Occasionally, to suit the chat** lets the model choose one of **24 original pink-ribbon cat reactions**, including laughter, hugs, gratitude, thinking, goodnight, coffee, celebration, and farewell. They arrive as native WhatsApp stickers alongside the text, quoting the incoming message. Automatic reactions are limited to one per chat every two minutes and are suppressed for file uploads and recognized serious or technical requests. The model is also instructed to avoid reactions in sensitive exchanges. The model can skip a sticker; they are not added to every answer.
 
@@ -35,9 +67,9 @@ The 24 transparent WebP files under `assets/stickers/` ship with the source. Kee
 
 ## Dashboard
 
-The dashboard and sign-in screen use a dark theme with muted green accents, locally bundled Manrope typography, and clear connection states. The top navigation jumps to Connection, AI provider, Bot behavior, and Advanced. Provider and behavior settings sit side by side on wider screens and stack on phones; pairing codes retain their original black-and-white contrast.
+The dashboard and sign-in screen use a dark theme with muted green accents, locally bundled Manrope typography, and clear connection states. The top navigation jumps to Connection, AI provider, Bot behavior, Access, and Advanced. Provider and behavior settings sit side by side on wider screens and stack on phones; pairing codes retain their original black-and-white contrast.
 
-Save changes applies the full settings form. Existing configuration, masked keys, WhatsApp pairing, and reply preferences stay in place when updating. Keep the complete `src/web/public/` directory, including `fonts/`. The dashboard makes no font or CDN requests. After an update, use Ctrl+F5 if your browser still shows the previous styling.
+Save changes applies the full settings form. Existing configuration, masked keys, WhatsApp pairing, and reply preferences stay in place when updating. Keep the complete `src/web/public/` directory, including `fonts/`. The dashboard makes no external font or CDN requests. Install backend and dashboard source together for access-control updates. After an update, use Ctrl+F5 if your browser still shows the previous styling.
 
 ## Hosting requirements
 
@@ -181,7 +213,7 @@ All `/api/*` endpoints except the password login require a valid signed session 
 | POST | `/api/bot/restart` | `{ "mode": "restart" }` or `{ "mode": "logout" }`; returns `202`. |
 | POST | `/api/ai/test` | Test the saved provider without adding conversation memory. |
 
-Settings validation returns `400` with a flat `fields` map. Sending `"********"` for an unchanged saved key preserves it. Schema additions to the PRD: `ai.maxImageMB`, `ai.mediaEnabled`, `ai.maxFileMB`, `ai.attachmentTransport`, `bot.personaStyle` (`feminine` / `custom`), `bot.stickerReplies` (`contextual` / `on-request` / `off`), `bot.replyTrigger`, `bot.maxMessageAgeSeconds`, `bot.markRead`, and `bot.rateLimitPerMinute`.
+Settings validation returns `400` with a flat `fields` map. Sending `"********"` for an unchanged saved key preserves it. Schema additions to the PRD: `ai.maxImageMB`, `ai.mediaEnabled`, `ai.maxFileMB`, `ai.attachmentTransport`, `bot.personaStyle` (`feminine` / `custom`), `bot.stickerReplies` (`contextual` / `on-request` / `off`), `bot.accessMode` (`everyone` / `owner-only` / `allowlist`), `bot.ownerNumber` (international digits or empty in Everyone mode), `bot.allowedNumbers` (array of up to 100 international numbers), `bot.replyTrigger`, `bot.maxMessageAgeSeconds`, `bot.markRead`, and `bot.rateLimitPerMinute`. Omitted access fields on a save retain the current policy; explicitly choose `everyone` to reopen access.
 
 Connect to authenticated **`/ws`** with a same-origin `Origin` header. Events are `{ "type": "status" | "qr", "payload": {...} }`. New clients receive the current snapshot and QR; subsequent changes are pushed without polling. WebSocket ping/pong runs every 30 seconds.
 

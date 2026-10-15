@@ -59,14 +59,14 @@ function harness(overrides = {}) {
     async reply(input) { calls.push(input); return `answer:${input.text}`; },
   };
   const handler = createMessageHandler({
-    settingsRepo: { get: () => structuredClone(current) },
+    settingsRepo: overrides.settingsRepo ?? { get: () => structuredClone(current) },
     aiService,
     logger: overrides.logger ?? logger,
     downloadImage: overrides.downloadImage,
     downloadMedia: overrides.downloadMedia,
     now: overrides.now,
   });
-  return { handler, calls };
+  return { handler, calls, current };
 }
 
 test('document failure logs distinguish download from AI processing and retain the safe public reason', async () => {
@@ -152,6 +152,258 @@ test('non-notify, from-me, broadcast, newsletter, self, protocol, and unsupporte
     ],
   });
 
+  assert.equal(calls.length, 0);
+  assert.equal(sock.sent.length, 0);
+  handler.close();
+});
+
+test('unauthorized messages do not consume deduplication or cause intake side effects', async () => {
+  let downloads = 0;
+  const logs = [];
+  const { handler, calls, current } = harness({
+    settings: settings({
+      bot: {
+        accessMode: 'owner-only',
+        ownerNumber: '15550000001',
+        allowedNumbers: [],
+        markRead: true,
+        typingIndicator: true,
+      },
+    }),
+    logger: {
+      debug(fields) { logs.push(fields); },
+      info(fields) { logs.push(fields); },
+      warn(fields) { logs.push(fields); },
+    },
+    downloadImage: async () => {
+      downloads += 1;
+      return { buffer: Buffer.from('image'), mimeType: 'image/jpeg' };
+    },
+  });
+  const sock = socket();
+  const incoming = message('access-retry', 'describe', {
+    remoteJid: 'group-1@g.us',
+    key: { participant: '15550000003@s.whatsapp.net' },
+    payload: { imageMessage: { caption: 'describe' } },
+  });
+
+  await handler.handleUpsert(sock, { type: 'notify', messages: [incoming] });
+  assert.equal(downloads, 0);
+  assert.equal(calls.length, 0);
+  assert.equal(sock.sent.length, 0);
+  assert.equal(sock.read.length, 0);
+  assert.equal(sock.presence.length, 0);
+  assert.equal(logs.length, 0);
+
+  current.bot.accessMode = 'everyone';
+  await handler.handleUpsert(sock, { type: 'notify', messages: [incoming] });
+  assert.equal(downloads, 1);
+  assert.deepEqual(calls.map(({ text }) => text), ['describe']);
+  assert.equal(sock.sent.length, 1);
+  handler.close();
+});
+
+test('unauthorized messages do not consume the accepted-message rate limit', async () => {
+  const { handler, calls } = harness({
+    settings: settings({
+      bot: {
+        accessMode: 'owner-only',
+        ownerNumber: '15550000001',
+        allowedNumbers: [],
+        rateLimitPerMinute: 1,
+      },
+    }),
+  });
+  await handler.handleUpsert(socket(), {
+    type: 'notify',
+    messages: [
+      message('stranger-first', 'ignore', {
+        remoteJid: 'group-1@g.us',
+        key: { participant: '15550000003@s.whatsapp.net' },
+      }),
+      message('owner-second', 'answer', {
+        remoteJid: 'group-1@g.us',
+        key: { participant: '15550000001@s.whatsapp.net' },
+      }),
+    ],
+  });
+
+  assert.deepEqual(calls.map(({ text }) => text), ['answer']);
+  handler.close();
+});
+
+test('live revocation suppresses an in-flight AI reply and queued work before its side effects', async () => {
+  let releaseAi;
+  let aiStarted;
+  const started = new Promise((resolve) => { aiStarted = resolve; });
+  let aiCalls = 0;
+  const { handler, current } = harness({
+    settings: settings({
+      bot: {
+        accessMode: 'allowlist',
+        ownerNumber: '15550000001',
+        allowedNumbers: ['15550000002'],
+        markRead: true,
+        typingIndicator: true,
+      },
+    }),
+    aiService: {
+      async reply() {
+        aiCalls += 1;
+        if (aiCalls > 1) return 'queued reply';
+        aiStarted();
+        return new Promise((resolve) => { releaseAi = () => resolve('revoked reply'); });
+      },
+    },
+  });
+  const sock = socket();
+  const options = {
+    remoteJid: 'group-1@g.us',
+    key: { participant: '15550000002@s.whatsapp.net' },
+  };
+  const pending = handler.handleUpsert(sock, {
+    type: 'notify',
+    messages: [message('active-ai', 'first', options), message('queued-after-ai', 'second', options)],
+  });
+  await started;
+
+  current.bot.allowedNumbers = [];
+  releaseAi();
+  await pending;
+
+  assert.equal(aiCalls, 1);
+  assert.equal(sock.read.length, 1);
+  assert.deepEqual(sock.presence, [
+    ['composing', 'group-1@g.us'],
+    ['paused', 'group-1@g.us'],
+  ]);
+  assert.equal(sock.sent.length, 0);
+  handler.close();
+});
+
+test('live revocation after media download prevents AI and reply delivery', async () => {
+  let releaseDownload;
+  let downloadStarted;
+  const started = new Promise((resolve) => { downloadStarted = resolve; });
+  let aiCalls = 0;
+  const { handler, current } = harness({
+    settings: settings({
+      bot: {
+        accessMode: 'allowlist',
+        ownerNumber: '15550000001',
+        allowedNumbers: ['15550000002'],
+      },
+    }),
+    downloadImage: async () => {
+      downloadStarted();
+      return new Promise((resolve) => {
+        releaseDownload = () => resolve({ buffer: Buffer.from('image'), mimeType: 'image/jpeg' });
+      });
+    },
+    aiService: { async reply() { aiCalls += 1; return 'revoked reply'; } },
+  });
+  const sock = socket();
+  const pending = handler.handleUpsert(sock, {
+    type: 'notify',
+    messages: [message('active-media', '', {
+      remoteJid: 'group-1@g.us',
+      key: { participant: '15550000002@s.whatsapp.net' },
+      payload: { imageMessage: {} },
+    })],
+  });
+  await started;
+
+  current.bot.allowedNumbers = [];
+  releaseDownload();
+  await pending;
+
+  assert.equal(aiCalls, 0);
+  assert.equal(sock.sent.length, 0);
+  handler.close();
+});
+
+test('socket deactivation during sender lookup prevents subsequent side effects', async () => {
+  let active = true;
+  let releaseLookup;
+  let secondLookupStarted;
+  const lookupStarted = new Promise((resolve) => { secondLookupStarted = resolve; });
+  let lookups = 0;
+  const { handler, calls } = harness({
+    settings: settings({
+      bot: {
+        accessMode: 'owner-only',
+        ownerNumber: '15550000001',
+        allowedNumbers: [],
+        markRead: true,
+      },
+    }),
+  });
+  const sock = socket({
+    signalRepository: {
+      lidMapping: {
+        async getPNForLID() {
+          lookups += 1;
+          if (lookups === 1) return '15550000001@s.whatsapp.net';
+          secondLookupStarted();
+          return new Promise((resolve) => { releaseLookup = () => resolve('15550000001@s.whatsapp.net'); });
+        },
+      },
+    },
+  });
+  const pending = handler.handleUpsert(sock, {
+    type: 'notify',
+    messages: [message('deactivate-during-access', 'hello', { remoteJid: '70000000001@lid' })],
+  }, { isActive: () => active });
+  await lookupStarted;
+
+  active = false;
+  releaseLookup();
+  await pending;
+
+  assert.equal(sock.read.length, 0);
+  assert.equal(calls.length, 0);
+  assert.equal(sock.sent.length, 0);
+  handler.close();
+});
+
+test('policy revocation during sender lookup is observed before subsequent side effects', async () => {
+  let releaseLookup;
+  let secondLookupStarted;
+  const lookupStarted = new Promise((resolve) => { secondLookupStarted = resolve; });
+  let lookups = 0;
+  const { handler, calls, current } = harness({
+    settings: settings({
+      bot: {
+        accessMode: 'allowlist',
+        ownerNumber: '15550000001',
+        allowedNumbers: ['15550000002'],
+        markRead: true,
+      },
+    }),
+  });
+  const sock = socket({
+    signalRepository: {
+      lidMapping: {
+        async getPNForLID() {
+          lookups += 1;
+          if (lookups !== 2) return '15550000002@s.whatsapp.net';
+          secondLookupStarted();
+          return new Promise((resolve) => { releaseLookup = () => resolve('15550000002@s.whatsapp.net'); });
+        },
+      },
+    },
+  });
+  const pending = handler.handleUpsert(sock, {
+    type: 'notify',
+    messages: [message('revoke-during-access', 'hello', { remoteJid: '70000000002@lid' })],
+  });
+  await lookupStarted;
+
+  current.bot.allowedNumbers = [];
+  releaseLookup();
+  await pending;
+
+  assert.equal(sock.read.length, 0);
   assert.equal(calls.length, 0);
   assert.equal(sock.sent.length, 0);
   handler.close();

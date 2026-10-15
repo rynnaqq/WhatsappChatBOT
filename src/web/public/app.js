@@ -79,7 +79,9 @@ function payload() {
   const result = structuredClone(savedSettings);
   for (const input of controls) {
     const [group, name] = input.name.split('.');
-    result[group][name] = input.type === 'checkbox' ? input.checked : input.type === 'number' ? Number(input.value) : input.value;
+    result[group][name] = input.name === 'bot.allowedNumbers'
+      ? input.value.split(/[\r\n,;]+/).map(number => number.trim()).filter(Boolean)
+      : input.type === 'checkbox' ? input.checked : input.type === 'number' ? Number(input.value) : input.value;
   }
   if (!result.ai.apiKey) result.ai.apiKey = savedSettings.ai.apiKey;
   return result;
@@ -109,6 +111,15 @@ function updateFormState() {
   $('#prefix-help').textContent = addressedOnly
     ? 'Command prefixes are ignored while Private chats + group tags/replies is selected.'
     : 'Leave empty to reply to all eligible messages.';
+  const accessMode = $('#access-mode').value;
+  const restricted = accessMode !== 'everyone';
+  $('#owner-number').required = restricted;
+  $('#owner-number-note').textContent = restricted ? 'required' : 'optional for Everyone';
+  $('#access-mode-help').textContent = accessMode === 'owner-only'
+    ? 'Only the owner may use the bot. Your saved allowed numbers are kept for later.'
+    : accessMode === 'allowlist'
+      ? 'The owner and numbers below may use the bot. All other senders are ignored.'
+      : 'Everyone may use the bot. The saved owner and number list do not restrict access in this mode.';
   $('#prompt-count').textContent = `${$('#system-prompt').value.length.toLocaleString()} / 4,000`;
 }
 function fillSettings(settings) {
@@ -116,7 +127,7 @@ function fillSettings(settings) {
   for (const input of controls) {
     const [group, name] = input.name.split('.');
     if (input.type === 'checkbox') input.checked = settings[group][name];
-    else input.value = name === 'apiKey' ? '' : settings[group][name];
+    else input.value = input.name === 'bot.allowedNumbers' ? settings.bot.allowedNumbers.join('\n') : name === 'apiKey' ? '' : settings[group][name];
   }
   $('#api-key').type = 'password';
   $('#reveal-key').textContent = 'Show';
@@ -126,6 +137,10 @@ function fillSettings(settings) {
   $('#model-summary').textContent = settings.ai.model;
   $('#scope-summary').textContent = settings.bot.privateChatsOnly || !settings.bot.groupRepliesEnabled ? 'Private chats' : 'Private & group chats';
   $('#memory-summary').textContent = settings.bot.memoryLimit === 0 ? 'Disabled' : `Last ${settings.bot.memoryLimit} turns`;
+  const additionalCount = settings.bot.allowedNumbers.filter(number => number !== settings.bot.ownerNumber).length;
+  $('#access-summary').textContent = settings.bot.accessMode === 'owner-only'
+    ? 'Owner only'
+    : settings.bot.accessMode === 'allowlist' ? `Owner + ${additionalCount} allowed` : 'Everyone';
   fieldsets.forEach((fieldset) => { fieldset.disabled = false; });
   updateFormState();
 }

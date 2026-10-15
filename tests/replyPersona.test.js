@@ -10,6 +10,22 @@ import {
   stickerAllowed,
 } from '../src/services/replyPersona.js';
 
+test('MCQ, study and direct option lists do not add automatic reaction stickers', () => {
+  const settings = { bot: { personaStyle: 'feminine', stickerReplies: 'contextual' } };
+  for (const text of [
+    'Hi, MCQ: 2 + 2? A. 3 B. 4',
+    'Hi, help me study fractions.',
+    'Hai, bantu aku belajar pecahan ya.',
+    'Hi! 1. 2 + 2?\nA) 3\nB) 4',
+    'Hi! 1. 2 + 2?\na.3\nb.4',
+  ]) {
+    assert.equal(stickerAllowed(settings, { text }), false, text);
+    assert.equal(buildReplySystemPrompt(settings, { text }).includes('[[sticker:'), false, text);
+  }
+  assert.equal(stickerAllowed(settings, { text: 'Hi, send me a sticker after this MCQ please.' }), true);
+  assert.equal(stickerAllowed(settings, { text: 'Hai, apa kabar?' }), true);
+});
+
 test('parseReply removes one allowed trailing control line from visible text', () => {
   assert.deepEqual(parseReply('Hai! 😊\n[[sticker:hello]]'), { text: 'Hai! 😊', stickerId: 'hello' });
   assert.deepEqual(parseReply('[[sticker:cheer]]'), { text: '', stickerId: 'cheer' });
@@ -162,6 +178,19 @@ test('contextual stickers stay disabled for serious greetings unless the user ex
   assert.equal(stickerAllowed(settings, { text: 'Hi, I am grieving; please send me a sticker.' }), true);
 });
 
+test('contextual stickers stay disabled for academic work while explicit requests still win', () => {
+  const settings = { bot: { stickerReplies: 'contextual' } };
+  for (const text of [
+    'Hai, bantu jawab soal pilihan ganda ini ya.',
+    'Hello, can you help with my homework? Thanks!',
+    'Aku senang, besok ada kuis matematika dan perlu belajar.',
+    'Hi, review these multiple-choice answers for my exam.',
+  ]) {
+    assert.equal(stickerAllowed(settings, { text }), false, text);
+  }
+  assert.equal(stickerAllowed(settings, { text: 'Bantu soal ini dan kirim stiker semangat dong.' }), true);
+});
+
 test('buildReplySystemPrompt preserves explicit custom-off mode and enables protocol only when allowed', () => {
   const customOff = { bot: { systemPrompt: 'My exact prompt.', personaStyle: 'custom', stickerReplies: 'off' } };
   assert.equal(buildReplySystemPrompt(customOff, { text: 'Hello' }), 'My exact prompt.');
@@ -190,4 +219,42 @@ test('feminine casual prompt offers varied expressions and the expanded sticker 
   assert.match(prompt, /\[\[sticker:celebrate\]\]/);
   assert.match(prompt, /emoji/iu);
   assert.match(prompt, /kaomoji/iu);
+});
+
+test('feminine prompt gives WhatsApp-native multiple-choice answer presentation rules', () => {
+  const prompt = buildReplySystemPrompt({
+    bot: {
+      systemPrompt: 'Solve accurately.',
+      personaStyle: 'feminine',
+      stickerReplies: 'contextual',
+    },
+  }, { text: 'Tolong jawab soal pilihan ganda ini:\n1. Ibu kota Indonesia adalah ...\nA. Bangkok\nB. Jakarta' });
+
+  assert.match(prompt, /Solve accurately\./);
+  assert.match(prompt, /\*Jawaban: B\. \.\.\.\*.*\*Penjelasan:\* \.\.\./su);
+  assert.match(prompt, /single asterisks/iu);
+  assert.match(prompt, /blank line/iu);
+  assert.match(prompt, /original numbering and order/iu);
+  assert.match(prompt, /compact answer key/iu);
+  assert.match(prompt, /answer-only|answer only/iu);
+  assert.match(prompt, /formulas, code, and quotations/iu);
+  assert.match(prompt, /missing or unreadable/iu);
+  assert.match(prompt, /Markdown tables/iu);
+  assert.match(prompt, /greetings, emoji, kaomoji/iu);
+  assert.doesNotMatch(prompt, /Haii, aku di sini/iu);
+  assert.equal(prompt.includes('[[sticker:'), false);
+});
+
+test('academic presentation guidance never changes a custom persona base prompt', () => {
+  const custom = {
+    bot: {
+      systemPrompt: 'Return only the option letter.',
+      personaStyle: 'custom',
+      stickerReplies: 'contextual',
+    },
+  };
+  assert.equal(
+    buildReplySystemPrompt(custom, { text: 'Hai, jawab soal pilihan ganda ini.' }),
+    'Return only the option letter.',
+  );
 });

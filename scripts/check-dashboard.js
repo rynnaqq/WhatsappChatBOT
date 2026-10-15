@@ -58,6 +58,24 @@ async function saveSettings(page) {
   await page.getByRole('status').filter({ hasText: 'Settings saved' }).waitFor();
 }
 
+async function rejectSettings(page, expectedFields) {
+  const [response] = await Promise.all([
+    page.waitForResponse(result => result.url().endsWith('/api/settings') && result.request().method() === 'POST'),
+    page.getByRole('button', { name: 'Save changes', exact: true }).click(),
+  ]);
+  assert.equal(response.status(), 400, 'Invalid access settings must be rejected');
+  const body = await response.json();
+  assert.deepEqual(Object.keys(body.fields || {}).sort(), [...expectedFields].sort(), 'Backend must identify each invalid access field');
+  await page.locator('#form-error').filter({ hasText: 'Please check the highlighted fields' }).waitFor();
+  for (const name of expectedFields) {
+    assert.equal(await page.locator(`[name="${name}"]`).getAttribute('aria-invalid'), 'true', `${name} must expose its backend error`);
+  }
+}
+
+function parseAccessList(value) {
+  return value.split(/[\n,;]+/).map((number) => number.trim()).filter(Boolean);
+}
+
 async function assertNoHorizontalOverflow(page, label) {
   const dimensions = await page.evaluate(() => ({
     body: document.body.scrollWidth,
@@ -110,6 +128,14 @@ async function assertSectionNavigation(page, width) {
       `Provider heading must not be hidden behind the sticky desktop header: ${JSON.stringify(placement)}`,
     );
   }
+
+  const accessLink = page.locator('.nav-link[href="#access"]');
+  await accessLink.click();
+  await page.waitForFunction(() => location.hash === '#access');
+  assert.equal(await accessLink.evaluate((element) => element.classList.contains('active')), true, 'Access navigation link must become active');
+  assert.equal(await page.locator('.nav-link.active').count(), 1, 'Exactly one navigation link must remain active after opening Access');
+  assert.equal(await page.locator('#access-title').isVisible(), true, 'Access navigation target heading must remain visible');
+  assert.equal(await page.locator('#access-fields').isVisible(), true, 'Access fields must remain visible from their navigation target');
 }
 
 async function waitForKeyboardScroll(page) {
@@ -216,6 +242,9 @@ async function assertKeyboardUsability(page, width, height) {
     })
     .map((control) => control.id || `${control.tagName.toLowerCase()}[name="${control.getAttribute('name') || ''}"]`));
   assert.ok(expected.length > 0, `Settings controls must be available at ${viewportLabel}`);
+  for (const identifier of ['access-mode', 'owner-number', 'allowed-numbers']) {
+    assert.ok(expected.includes(identifier), `${identifier} must participate in native keyboard traversal at ${viewportLabel}`);
+  }
 
   await page.evaluate(() => {
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
@@ -237,7 +266,9 @@ try {
     const externalAssetRequests = [];
     page.on('pageerror', (error) => problems.push(error.message));
     page.on('console', (message) => {
-      if (message.type() === 'error' && !(message.location().url.endsWith('/api/auth/login') && message.text().includes('401'))) problems.push(message.text());
+      const expectedRequestError = message.location().url.endsWith('/api/auth/login') && message.text().includes('401')
+        || message.location().url.endsWith('/api/settings') && message.text().includes('400');
+      if (message.type() === 'error' && !expectedRequestError) problems.push(message.text());
     });
     page.on('request', (request) => {
       const url = new URL(request.url());
@@ -281,6 +312,90 @@ try {
     assert.equal(repo.get().ai.attachmentTransport, '9router-gemini');
     assert.equal(repo.get().bot.personaStyle, 'custom');
     assert.equal(repo.get().bot.stickerReplies, 'on-request');
+    const accessMode = page.locator('#access-mode');
+    const ownerNumber = page.locator('#owner-number');
+    const allowedNumbers = page.locator('#allowed-numbers');
+    const accessSummary = page.locator('#access-summary');
+    const canonicalOwner = '6281234567890';
+    const canonicalAllowed = ['6281111111111', '12025550100', canonicalOwner];
+    assert.equal(await accessMode.getAttribute('name'), 'bot.accessMode');
+    assert.equal(await ownerNumber.getAttribute('name'), 'bot.ownerNumber');
+    assert.equal(await ownerNumber.getAttribute('type'), 'tel');
+    assert.equal(await allowedNumbers.getAttribute('name'), 'bot.allowedNumbers');
+    assert.equal(await allowedNumbers.evaluate((element) => element.tagName), 'TEXTAREA');
+    assert.equal(await accessMode.inputValue(), 'everyone');
+    assert.equal(await accessSummary.textContent(), 'Everyone');
+    assert.equal(await ownerNumber.isEditable(), true);
+    assert.equal(await allowedNumbers.isEditable(), true);
+    assert.equal(await ownerNumber.getAttribute('required'), null);
+
+    await accessMode.selectOption('owner-only');
+    assert.equal(await accessSummary.textContent(), 'Everyone', 'Access summary must retain the saved mode before saving owner-only');
+    assert.equal(await ownerNumber.getAttribute('required'), '');
+    assert.equal(await ownerNumber.isEditable(), true);
+    assert.equal(await allowedNumbers.isEditable(), true);
+    await ownerNumber.fill('');
+    assert.equal(await page.locator('#settings-form').evaluate((form) => form.checkValidity()), false, 'Restricted access must require an owner number natively');
+
+    await accessMode.selectOption('allowlist');
+    assert.equal(await accessSummary.textContent(), 'Everyone', 'Access summary must retain the saved mode before saving allowlist');
+    assert.equal(await ownerNumber.getAttribute('required'), '');
+    assert.equal(await ownerNumber.isEditable(), true);
+    assert.equal(await allowedNumbers.isEditable(), true);
+    await ownerNumber.fill('not-a-number');
+    await allowedNumbers.fill('+62 811-1111-1111; invalid-number');
+    await rejectSettings(page, ['bot.ownerNumber', 'bot.allowedNumbers']);
+
+    await ownerNumber.fill('+62 (812) 3456-7890');
+    await allowedNumbers.fill('+62 811-1111-1111\n+62 (811) 1111-1111; +1 (202) 555-0100,\n+62 (812) 3456-7890');
+    assert.equal(await accessSummary.textContent(), 'Everyone', 'Correcting unsaved fields must not update the saved access summary');
+    await saveSettings(page);
+    await accessSummary.filter({ hasText: 'Owner + 2 allowed' }).waitFor();
+    assert.equal(repo.get().bot.accessMode, 'allowlist');
+    assert.equal(repo.get().bot.ownerNumber, canonicalOwner);
+    assert.deepEqual(repo.get().bot.allowedNumbers, canonicalAllowed);
+    assert.equal(await ownerNumber.inputValue(), canonicalOwner);
+    assert.deepEqual(parseAccessList(await allowedNumbers.inputValue()), canonicalAllowed);
+    assert.equal(await page.getByLabel(/^API key/).inputValue(), '');
+    assert.equal(repo.get().ai.apiKey, 'fake-browser-provider-key');
+
+    await page.reload();
+    await page.locator('#save-state').filter({ hasText: 'All changes saved' }).waitFor();
+    assert.equal(await accessMode.inputValue(), 'allowlist');
+    assert.equal(await accessSummary.textContent(), 'Owner + 2 allowed');
+    assert.equal(await ownerNumber.inputValue(), canonicalOwner);
+    assert.deepEqual(parseAccessList(await allowedNumbers.inputValue()), canonicalAllowed);
+
+    await allowedNumbers.fill(`${canonicalAllowed.join('\n')}\n33142278186`);
+    assert.equal(await accessSummary.textContent(), 'Owner + 2 allowed', 'Unsaved list edits must not change the saved allowed count');
+    await allowedNumbers.fill(canonicalAllowed.join('\n'));
+
+    await accessMode.selectOption('owner-only');
+    assert.equal(await accessSummary.textContent(), 'Owner + 2 allowed', 'Access summary must stay on the saved allowlist until owner-only is saved');
+    assert.equal(await ownerNumber.getAttribute('required'), '');
+    assert.equal(await ownerNumber.isEditable(), true);
+    assert.equal(await allowedNumbers.isEditable(), true);
+    await saveSettings(page);
+    await accessSummary.filter({ hasText: 'Owner only' }).waitFor();
+    assert.equal(repo.get().bot.accessMode, 'owner-only');
+    assert.equal(repo.get().bot.ownerNumber, canonicalOwner);
+    assert.deepEqual(repo.get().bot.allowedNumbers, canonicalAllowed);
+    assert.equal(await ownerNumber.inputValue(), canonicalOwner);
+    assert.deepEqual(parseAccessList(await allowedNumbers.inputValue()), canonicalAllowed);
+
+    await accessMode.selectOption('everyone');
+    assert.equal(await accessSummary.textContent(), 'Owner only', 'Access summary must stay on the saved owner-only mode until Everyone is saved');
+    assert.equal(await ownerNumber.getAttribute('required'), null);
+    assert.equal(await ownerNumber.isEditable(), true);
+    assert.equal(await allowedNumbers.isEditable(), true);
+    await saveSettings(page);
+    await accessSummary.filter({ hasText: 'Everyone' }).waitFor();
+    assert.equal(repo.get().bot.accessMode, 'everyone');
+    assert.equal(repo.get().bot.ownerNumber, canonicalOwner);
+    assert.deepEqual(repo.get().bot.allowedNumbers, canonicalAllowed);
+    assert.equal(await ownerNumber.inputValue(), canonicalOwner);
+    assert.deepEqual(parseAccessList(await allowedNumbers.inputValue()), canonicalAllowed);
+    assert.equal(repo.get().ai.apiKey, 'fake-browser-provider-key');
     await page.getByRole('button', { name: 'Test connection', exact: true }).click();
     await page.getByRole('status').filter({ hasText: 'Connection successful' }).waitFor();
     await page.getByLabel('Model name').fill(longLayoutModel);
@@ -347,6 +462,15 @@ try {
     assert.equal(await page.getByLabel('Attachment format', { exact: true }).inputValue(), '9router-gemini');
     assert.equal(await page.getByLabel('Reply style', { exact: true }).inputValue(), 'custom');
     assert.equal(await page.getByLabel('Sticker replies', { exact: true }).inputValue(), 'on-request');
+    assert.equal(await accessMode.inputValue(), 'everyone');
+    assert.equal(await accessSummary.textContent(), 'Everyone');
+    assert.equal(await ownerNumber.inputValue(), canonicalOwner);
+    assert.deepEqual(parseAccessList(await allowedNumbers.inputValue()), canonicalAllowed);
+    assert.equal(await ownerNumber.isEditable(), true);
+    assert.equal(await allowedNumbers.isEditable(), true);
+    assert.equal(await ownerNumber.getAttribute('required'), null);
+    assert.equal(await page.getByLabel(/^API key/).inputValue(), '');
+    assert.equal(repo.get().ai.apiKey, 'fake-browser-provider-key');
     await page.getByLabel('Reply style', { exact: true }).selectOption('feminine');
     await page.getByLabel('Sticker replies', { exact: true }).selectOption('contextual');
     await saveSettings(page);
@@ -369,6 +493,10 @@ try {
     assert.equal(await page.getByLabel('Command prefix').inputValue(), '?');
     await saveSettings(page);
     assert.equal(repo.get().bot.replyTrigger, 'prefix');
+    assert.equal(repo.get().bot.accessMode, 'everyone');
+    assert.equal(repo.get().bot.ownerNumber, canonicalOwner);
+    assert.deepEqual(repo.get().bot.allowedNumbers, canonicalAllowed);
+    assert.equal(repo.get().ai.apiKey, 'fake-browser-provider-key');
     const triggerAudit = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze();
     assert.deepEqual(triggerAudit.violations.map((v) => v.id), [], `Reply trigger accessibility at ${width}px`);
     state.update({ state: 'connected', qr: undefined, phone: '6281234567890', connectedAt: '2026-10-08T12:00:00.000Z' });
@@ -384,7 +512,7 @@ try {
   }
   assert.deepEqual(problems, [], 'Browser errors');
   await writeFile('test-results/dashboard-check.json', JSON.stringify({ results, browserErrors: problems }, null, 2));
-  console.log(`Dashboard checks passed at ${viewportWidths.join('px, ')}px: responsive layout, local font loading, navigation, settings, provider test, QR/status, keyboard dialogs, restart/logout, persistence, sign-out, screenshots, and WCAG AA audits.`);
+  console.log(`Dashboard checks passed at ${viewportWidths.join('px, ')}px: responsive layout, local font loading, navigation, access modes, settings, provider test, QR/status, keyboard dialogs, restart/logout, persistence, sign-out, screenshots, and WCAG AA audits.`);
 } catch (error) {
   await currentPage?.screenshot({ path: 'test-results/dashboard-failure.png', fullPage: true }).catch(() => {});
   throw error;
