@@ -1,5 +1,16 @@
 # Verification
 
+## Cuter, funnier Renako with light tsundere banter — 2026-10-16
+
+Refined only the existing Renako guide, original dialogue samples, and documentation. The requested casual adaptation adds bashful pride, gentle protests followed by care, and short situational humor. It is occasional and responsive to the user's tone; serious tasks and explicit formats retain priority. No new character facts are asserted as canon.
+
+| Check | Result |
+| --- | --- |
+| Application regression | `npm test`: 338 passed, zero failures, cancellations, or skips. `npm run check`: all 58 JavaScript files passed on Node 24.20.0. Existing actual-client tests still verify profile delivery, academic guidance, bold correction, sticker controls, memory, and switching back to custom mode. |
+| Prompt review | Independent read-only review found no required fixes. It checked the requested mild degree, varied expressions, warmth and willing help, contextual humor, and the final serious-task/output-format priorities. |
+| Scope and limitations | This is prompt wording, not a new application branch. Browser assets and persistence code are unchanged, so their earlier browser checks were not repeated. Fixture replies do not establish live-model naturalness, humor, or consistent tsundere behavior; no live model or real WhatsApp conversation was evaluated. |
+| Source package | The 127-entry ZIP excludes runtime secrets/storage. Fresh `npm ci --omit=dev --ignore-scripts` and 290 packaged feature tests passed. Its owned exported CLI served health, login, authenticated legacy settings, and byte-matched dashboard assets on the allocated port. Overlay/startup preserved synthetic `secrets.env`, legacy `.env`, encrypted settings, custom instructions, and pairing-marker bytes. Only the isolated fixture process was started/stopped. Working and staged diff checks passed. |
+
 ## Renako Amaori character preset — 2026-10-16
 
 The approved selectable Renako Amaori — WATANARE preset adds a character-specific guide and original conversational examples. The introductory character anchors come from the [official profile](https://www.watanare-anime.com/#character) and [publisher synopsis](https://sevenseasentertainment.com/series/theres-no-freaking-way-ill-be-your-lover-unless-light-novel/). Academic formatting, expression choices, sticker controls, and bold correction use existing application paths. Older installations retain their selected style; the operator activates Renako through Reply style and Save changes.
