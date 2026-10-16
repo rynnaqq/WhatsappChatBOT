@@ -1,5 +1,20 @@
 # Verification
 
+## WhatsApp bold correction — 2026-10-16
+
+The application now converts ordinary balanced, same-line Markdown bold to WhatsApp's single-asterisk syntax at the AI response boundary. For example, `**Jawaban:** **B. Fotosintesis**` becomes `*Jawaban:* *B. Fotosintesis*`. Sticker controls are parsed first; returned text and conversation memory receive the same corrected answer. The feminine guide requests this syntax, while custom system prompts remain unchanged.
+
+| Check | Result |
+| --- | --- |
+| RED/GREEN evidence | The actual AI-boundary test failed with the previous raw double-star answer and passed after normalization. Additional regressions reproduced grouped/fractional power corruption, nested quoted tilde fences, and indented code-span endings before the corresponding corrections. |
+| Full suite and syntax | `npm test`: 335 passed, zero failures, cancellations, or skips. `npm run check`: all 57 JavaScript files passed on Node 24.20.0. Working and staged diff checks passed. |
+| Response and memory | Actual AIService/MemoryService tests use a local HTTP provider through the official client. Common answer/explanation labels convert in one request; numbering, blank lines, code, and answer contents survive. Sticker controls do not leak into history, academic stickers remain suppressed, and custom mode sends its exact base prompt. |
+| Literal preservation | Focused cases retain native formatting, escaped/unmatched/triple runs, inline and multiline code, indented code, ordinary/long/quoted/unfinished fences, powers with grouped/signed/fractional operands, Unicode math variables, and path globs. Complete code spans release subsequent prose for correction. CRLF and surrounding whitespace survive; common conversions are idempotent. |
+| Independent review | Prior literal-corruption findings were fixed and rechecked with no remaining findings within the agreed conservative scope. |
+| Complete source package | The 124-entry ZIP includes the formatter and its tests, excluding runtime secrets/storage. Fresh `npm ci --omit=dev --ignore-scripts` and 287 packaged feature tests passed. Its owned exported CLI served health, login, authenticated legacy settings, dashboard, CSS, favicon, bundled font, and license on the allocated port. Static assets matched archive bytes. Overlay/startup preserved synthetic `secrets.env`, legacy `.env`, encrypted settings, custom instructions, and pairing-marker bytes. Only the isolated unpaired fixture was started and stopped. |
+
+These checks use synthetic responses and local fixtures. Actual WhatsApp rendering, live model behavior, and remote Pterodactyl deployment were not exercised. Ambiguous delimiter combinations remain as supplied; literal examples should use backticks. Earlier dashboard browser evidence applies to its unchanged assets.
+
 ## Owner access and clearer academic replies — 2026-10-15
 
 The dashboard now controls who may use the bot through Everyone, Owner only, and Owner + allowed numbers. Owner identity is an explicitly configured account separate from the paired bot. Restricted modes check the actual sender before intake side effects; the existing private/group and trigger rules still apply. Academic presentation is an additional feminine-style instruction with a clear answer/explanation example, while custom persona prompts and factual answer text remain unchanged.

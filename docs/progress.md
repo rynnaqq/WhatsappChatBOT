@@ -1,5 +1,13 @@
 # Implementation progress
 
+## WhatsApp bold correction — 2026-10-16
+
+- Added deterministic normalization of balanced, same-line double-asterisk prose bold into WhatsApp's single-asterisk form. The actual AI boundary converts `**Jawaban:**` to `*Jawaban:*` after sticker-control parsing, before delivery and conversation memory, without another provider call. The feminine guide also requests the native convention; custom system prompts stay exact.
+- Kept inline/multiline/indented/fenced code and literal examples protected, including unfinished code, nested quoted fences, and different backtick lengths. Escaped, native, unmatched, and triple-star syntax stays as supplied. Conservative guards retain common exponent operators, fractional exponents, Unicode variables, and path wildcards. This corrects ordinary bold rather than implementing all Markdown syntax.
+- The original AI-boundary regression failed on raw `**Jawaban:**` before implementation. Independent review found punctuation-adjacent powers and trailing globs pairing as bold, plus a nested quoted fence case; additional failing regressions drove the targeted guards. Indented code-span endings and complete triple-backtick inline spans are also covered. Final read-only review found no remaining issues within scope.
+- Fresh verification passed 335/335 tests and all 57 JavaScript syntax checks on Node 24.20.0. Local HTTP fixtures verify the actual official-client response, sticker suppression, consistent returned/history text, and exact custom base prompt. No dashboard, dependencies, saved settings, or access policy changed.
+- The complete 124-entry source ZIP passed a fresh production install with scripts disabled, 287 packaged feature tests, and exported CLI health/login/settings/static-asset checks on its allocated port. Overlay and startup preserved synthetic `secrets.env`, legacy `.env`, encrypted settings, custom prompt, and pairing-marker bytes. Only the isolated unpaired fixture was started/stopped; the operator's bot and remote server were not accessed.
+
 ## Owner access and clearer academic replies — 2026-10-15
 
 - Added dashboard Access controls for Everyone, Owner only, and Owner + allowed numbers. Restricted modes require a separate owner's international WhatsApp number; up to 100 additional numbers normalize and deduplicate on save. Switching modes retains the list. Valid older settings default to Everyone without rewriting the file, while older client saves preserve an already configured policy.

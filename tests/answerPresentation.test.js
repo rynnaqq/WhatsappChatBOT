@@ -119,3 +119,19 @@ test('AI boundary leaves the custom persona prompt exact for academic input', as
   assert.equal(provider.requests[0].messages[0].content, 'Return only the option letter.');
   assert.deepEqual(memory.get('custom-study-chat', 3).at(-1), { role: 'assistant', content: 'B' });
 });
+
+test('AI boundary converts Markdown bold to WhatsApp bold before returning and remembering the reply', async (t) => {
+  const raw = '**Jawaban:** **B. Fotosintesis**\n\n**Penjelasan:** Energi cahaya membentuk glukosa.\n\nContoh: `2 ** 3`\n```python\nvalue = 2 ** 3\nlabel = "**Jawaban:**"\n```\n[[sticker:happy]]';
+  const expected = '*Jawaban:* *B. Fotosintesis*\n\n*Penjelasan:* Energi cahaya membentuk glukosa.\n\nContoh: `2 ** 3`\n```python\nvalue = 2 ** 3\nlabel = "**Jawaban:**"\n```';
+  const provider = await startProvider(t, raw);
+  const memory = new MemoryService();
+  const service = new AIService({ settingsRepo: fakeRepo(settings(provider.baseURL)), memory });
+  const input = 'Jelaskan jawaban soal pilihan ganda ini.';
+
+  assert.deepEqual(await service.replyWithMedia({ chatId: 'bold-study-chat', text: input }), { text: expected, stickerId: null });
+  assert.equal(provider.requests.length, 1);
+  assert.deepEqual(memory.get('bold-study-chat', 3), [
+    { role: 'user', content: input },
+    { role: 'assistant', content: expected },
+  ]);
+});

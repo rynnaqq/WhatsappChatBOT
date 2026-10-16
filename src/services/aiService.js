@@ -5,6 +5,7 @@ import { computeBackoffDelay, isAbortError, isRetryableProviderError } from './r
 import { AttachmentUserFacingError, prepareAttachment } from './attachmentService.js';
 import { AttachmentContext } from './attachmentContext.js';
 import { buildReplySystemPrompt, parseReply, stickerAllowed, stickerFallback } from './replyPersona.js';
+import { normalizeWhatsAppBold } from './whatsappFormatting.js';
 
 const MAX_TRANSIENT_RETRIES = 3;
 const GENERIC_ERROR = 'The AI service is temporarily unavailable. Please try again.';
@@ -149,9 +150,10 @@ export class AIService {
       }
 
       const parsed = parseReply(extractText(response));
+      const replyText = normalizeWhatsAppBold(parsed.text);
       const stickerId = stickerAllowed(settings, replyContext) ? parsed.stickerId : null;
-      if (!parsed.text && !stickerId) throw new UserFacingError('The AI service returned an empty response. Please try again.');
-      const rememberedAnswer = parsed.text || stickerFallback(stickerId);
+      if (!replyText && !stickerId) throw new UserFacingError('The AI service returned an empty response. Please try again.');
+      const rememberedAnswer = replyText || stickerFallback(stickerId);
       const rememberedText = attachmentMemory
         ? `${attachmentMemory}${userText ? ` ${userText}` : ''}`
         : imageBuffer
@@ -169,7 +171,7 @@ export class AIService {
           });
         }
       }
-      return { text: parsed.text, stickerId };
+      return { text: replyText, stickerId };
     } catch (error) {
       throw this.#toUserFacingError(error, operation.signal, hasAttachment);
     } finally {
