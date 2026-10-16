@@ -1,5 +1,12 @@
 # Implementation progress
 
+## Cleaner contextual kaomoji choices — 2026-10-17
+
+- Traced the clutter pressure to a one-to-three expression suggestion, six decorated Renako examples, and a palette containing long or formatting-sensitive faces. A one-off readability check rejected 10 of the original 40 choices. The curated catalog retains 40 unique choices, now at most ten Unicode codepoints each and without ASCII backticks, asterisks, or tildes. Bashful `>.<` now belongs to the bashful palette rather than joy.
+- Both built-in styles share plain-text-first expression guidance: at most one optional compact face in an ordinary casual reply, mood-specific selection, plain text preferred after a face, and omission over unrelated variation. Faces are placed after a relevant sentence without chains, decorative lines, or emoji piled on top. Serious/task replies and explicit requests for literal examples/lists retain their priorities. Renako now has only one kaomoji-bearing example out of six.
+- The readability check passes for all 40 unique choices; focused existing tests passed 47/47, the full suite passed 338/338, and all 58 JavaScript syntax checks passed. Independent read-only review found no source conflicts or required fixes. These changes guide the model rather than parsing/deleting output or enforcing a runtime quota. Live-model emotion matching and WhatsApp appearance were not evaluated. UI and application-flow code remain unchanged.
+- The complete 127-entry source ZIP passed a fresh production install with scripts disabled, 290 packaged feature tests, and actual exported CLI health/login/settings/static-asset checks on its allocated port. Overlay/startup preserved synthetic environment files, encrypted settings, custom instructions, and pairing-marker bytes. Only the owned unpaired fixture process was started/stopped.
+
 ## Cuter, funnier Renako with light tsundere banter — 2026-10-16
 
 - Refined the existing Renako chat guide and original dialogue examples for the requested cute, funny, mildly tsundere tone. Compliments and friendly teasing can prompt bashful pride or a small playful protest followed by sincere warmth. Situational jokes, gaming comparisons, and self-corrections vary with context; concern and help stay willing and direct.

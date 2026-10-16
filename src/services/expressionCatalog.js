@@ -1,34 +1,34 @@
-// Mood palettes guide expression variety without making every reply decorative.
+// Compact, formatting-safe faces guide occasional expression, never mandatory decoration.
 const groups = [
   {
     id: 'friendly', label: 'Greetings and warm smiles',
     emojis: ['👋', '😊', '🙂', '😄', '🌸', '🌷', '🌼', '✨', '🫶', '🤗'],
-    kaomoji: ['(｡•ᴗ•｡)', '(´｡• ᵕ •｡`)', '(^▽^)', '^.^', '(˶ᵔ ᵕ ᵔ˶)', '(｡･ω･｡)ﾉ', 'ヾ(・ω・*)'],
+    kaomoji: ['(｡•ᴗ•｡)', '(^▽^)', '^.^', '(˶ᵔᵕᵔ˶)', '(・∀・)', '(｡･ω･｡)', '(＾◡＾)'],
   },
   {
     id: 'happy', label: 'Playful joy and celebration',
     emojis: ['😆', '😂', '🤣', '😹', '😸', '🥳', '🎉', '🎊', '⭐', '💫'],
-    kaomoji: ['>.<', '(≧▽≦)', '(๑˃ᴗ˂)ﻭ', 'o(≧▽≦)o', '(ﾉ◕ヮ◕)ﾉ*:･ﾟ✧', '(＾▽＾)', '(☆▽☆)'],
+    kaomoji: ['(≧▽≦)', '(＾▽＾)', '(☆▽☆)', '(^o^)', '＼(^o^)／', '(๑˃ᴗ˂๑)', '(ﾉ^ヮ^)ﾉ'],
   },
   {
-    id: 'affection', label: 'Shy and affectionate moments',
+    id: 'affection', label: 'Bashful appreciation and affectionate moments',
     emojis: ['🥰', '😍', '😘', '😚', '😳', '🙈', '💕', '💗', '💖', '🎀'],
-    kaomoji: ['(⁄ ⁄>⁄ ▽ ⁄<⁄ ⁄)', '(〃ω〃)', '(´♡‿♡`)', '(づ｡◕‿‿◕｡)づ', '(♡˙︶˙♡)', '(´,,•ω•,,)♡', '(｡♥‿♥｡)'],
+    kaomoji: ['>.<', '(〃▽〃)', '(〃ω〃)', '(⁄ω⁄)', '(｡･･｡)', '(๑´ω๑)', '(｡•ㅅ•｡)'],
   },
   {
     id: 'comfort', label: 'Gentle comfort and encouragement',
     emojis: ['🥺', '😢', '😔', '💐', '🌻', '🤍', '💛', '💪', '🍀', '🫂'],
-    kaomoji: ['(っ´ω`)ﾉ(╥ω╥)', '(๑•̀ㅂ•́)و✧', '(ง •̀_•́)ง', '(つ≧▽≦)つ', '(´･ᴗ･`)', '(｡•́︿•̀｡)', '(´•̥ ω •̥`)'],
+    kaomoji: ['(๑•̀ㅂ•́)و', '(ง •̀_•́)ง', '(つω⊂)', '(｡•́︿•̀｡)', '(；ω；)', '(´･ᴗ･)', '( •̀ᴗ•́ )و'],
   },
   {
     id: 'reaction', label: 'Thinking, surprise, and light teasing',
     emojis: ['🤔', '🧐', '😮', '😲', '😵‍💫', '😅', '😉', '😌', '👍', '👌'],
-    kaomoji: ['(・・?)', '(・_・ヾ)', '(・・;)', '(⊙_⊙)', '(¬‿¬)', '(￣ω￣)'],
+    kaomoji: ['(・・?)', '(・_・;)', '(・・;)', '(⊙_⊙)', '(￣^￣)', '(￣ω￣)'],
   },
   {
     id: 'calm', label: 'Sleepy and cozy everyday chat',
     emojis: ['😴', '🥱', '🌙', '🌟', '☁️', '☕', '🍵', '🍰', '🍪', '😋'],
-    kaomoji: ['(－ω－) zzZ', '(￣▽￣)ノ', '(´～`)', '( ˘ω˘ )', '(っ˘ڡ˘ς)', '(´｡• ω •｡`)'],
+    kaomoji: ['( ˘ω˘ )', '(－ω－)', '(￣▽￣)ﾉ', '(u_u)', '(-_-)zzz', '(｡-ω-｡)'],
   },
 ];
 

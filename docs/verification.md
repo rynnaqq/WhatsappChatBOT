@@ -1,5 +1,18 @@
 # Verification
 
+## Cleaner contextual kaomoji choices — 2026-10-17
+
+The built-in feminine and Renako prompts now share guidance favoring plain text and one optional compact face only when it fits an ordinary casual reply. Mood selection and pacing are explicit, and Renako's examples no longer imply that every message needs decoration. This is model guidance, not output filtering or a hard runtime limit; explicit literal/list requests and custom persona prompts keep their existing contracts.
+
+| Check | Result |
+| --- | --- |
+| Catalog reproduction | A one-off check against the old catalog rejected ten faces containing formatting markers or exceeding twelve Unicode codepoints. The revised catalog passes with 40 unique faces, maximum length ten, and no ASCII backtick/asterisk/tilde or newline. Both actual built-in prompt builders include the curated choices; prior expression-budget instructions are absent. |
+| Focused regression | Existing persona, actual-client answer presentation, native sticker delivery, and bold-format tests passed 47/47. Custom prompt exactness, authored response/history contents, literal examples/code, and sticker controls remain covered. |
+| Full suite and syntax | `npm test`: 338 passed, zero failures, cancellations, or skips. `npm run check`: all 58 JavaScript files passed on Node 24.20.0. |
+| Independent review | No concrete conflicts, formatting hazards, or required fixes were found in the three source diffs. Review verified ordinary-chat limits, explicit-example exceptions, Renako sample restraint, and unchanged control paths. |
+| Limits | Live-model adherence, perceived visual appeal, and actual WhatsApp rendering were not evaluated. No user/model text is removed or rewritten by this change. Unchanged browser assets use the preceding browser evidence; browser flows were not rerun for prompt/catalog edits. |
+| Source package | The 127-entry ZIP excludes runtime secrets/storage. Fresh `npm ci --omit=dev --ignore-scripts` and 290 packaged feature tests passed. Its exported owned CLI served health, login, authenticated legacy settings, and byte-matched dashboard assets on the allocated port. Overlay/startup preserved synthetic `secrets.env`, legacy `.env`, encrypted settings, custom prompt, and pairing-marker bytes. Only the isolated fixture process was started/stopped. Working/staged diff checks passed. |
+
 ## Cuter, funnier Renako with light tsundere banter — 2026-10-16
 
 Refined only the existing Renako guide, original dialogue samples, and documentation. The requested casual adaptation adds bashful pride, gentle protests followed by care, and short situational humor. It is occasional and responsive to the user's tone; serious tasks and explicit formats retain priority. No new character facts are asserted as canon.
