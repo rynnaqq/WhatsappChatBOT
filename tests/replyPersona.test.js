@@ -221,11 +221,12 @@ test('feminine casual prompt offers varied expressions and the expanded sticker 
   assert.match(prompt, /kaomoji/iu);
 });
 
-test('feminine prompt gives WhatsApp-native multiple-choice answer presentation rules', () => {
+for (const personaStyle of ['feminine', 'renako']) {
+test(`${personaStyle} prompt gives WhatsApp-native multiple-choice answer presentation rules`, () => {
   const prompt = buildReplySystemPrompt({
     bot: {
       systemPrompt: 'Solve accurately.',
-      personaStyle: 'feminine',
+      personaStyle,
       stickerReplies: 'contextual',
     },
   }, { text: 'Tolong jawab soal pilihan ganda ini:\n1. Ibu kota Indonesia adalah ...\nA. Bangkok\nB. Jakarta' });
@@ -244,6 +245,7 @@ test('feminine prompt gives WhatsApp-native multiple-choice answer presentation 
   assert.doesNotMatch(prompt, /Haii, aku di sini/iu);
   assert.equal(prompt.includes('[[sticker:'), false);
 });
+}
 
 test('academic presentation guidance never changes a custom persona base prompt', () => {
   const custom = {

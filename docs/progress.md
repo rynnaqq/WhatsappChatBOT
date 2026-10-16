@@ -1,5 +1,13 @@
 # Implementation progress
 
+## Renako Amaori character preset — 2026-10-16
+
+- Added the approved Renako Amaori — WATANARE preset through the existing Reply style control. The separate character guide draws on the official introductory profile and publisher synopsis, with original Indonesian dialogue examples and a mix of practiced cheerfulness, flustered corrections, comic overthinking, and sincere friendship. Familiar conversations can relax; the guide avoids repetitive hesitation and invented canon.
+- Reused the expression catalog, academic presentation guide, sticker eligibility/protocol, and WhatsApp bold correction. Task instructions and requested formats take priority over character mannerisms, and document/technical/sensitive answers stay focused. The role treats users as themselves and describes actual identity/capabilities honestly when asked.
+- Added enum validation and dashboard selection without changing defaults or migrating existing saved styles. Tests round-trip the choice while preserving encrypted credentials, system instructions, and owner access. The actual HTTP AI boundary receives the selected profile, returns normalized text/history, and can switch back to exact custom/off mode on the next request.
+- Observed three expected RED failures before implementation: the unsupported settings value, absent profile in the provider request, and missing Renako academic guidance. Fresh verification then passed 338/338 tests and all 58 JavaScript syntax checks. Chromium passed at 1440, 768, 360, and 320 pixels, including Renako save/reload, unchanged prompt/key, switching styles, access controls, keyboard visibility, and WCAG AA audits. Independent read-only review found no remaining issues.
+- The complete 127-entry source ZIP passed a fresh production install with scripts disabled, 290 packaged feature tests, and exported CLI health/login/settings/static-asset checks on its allocated port. Synthetic environment files, encrypted settings, custom prompt, and pairing-marker bytes remained unchanged across overlay/startup. No operator process was restarted and no live model or WhatsApp request was made.
+
 ## WhatsApp bold correction — 2026-10-16
 
 - Added deterministic normalization of balanced, same-line double-asterisk prose bold into WhatsApp's single-asterisk form. The actual AI boundary converts `**Jawaban:**` to `*Jawaban:*` after sticker-control parsing, before delivery and conversation memory, without another provider call. The feminine guide also requests the native convention; custom system prompts stay exact.

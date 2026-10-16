@@ -1,5 +1,21 @@
 # Verification
 
+## Renako Amaori character preset — 2026-10-16
+
+The approved selectable Renako Amaori — WATANARE preset adds a character-specific guide and original conversational examples. The introductory character anchors come from the [official profile](https://www.watanare-anime.com/#character) and [publisher synopsis](https://sevenseasentertainment.com/series/theres-no-freaking-way-ill-be-your-lover-unless-light-novel/). Academic formatting, expression choices, sticker controls, and bold correction use existing application paths. Older installations retain their selected style; the operator activates Renako through Reply style and Save changes.
+
+| Check | Result |
+| --- | --- |
+| RED/GREEN evidence | Before implementation, tests rejected `renako` at settings validation, found no character profile in the actual provider request, and found no academic guide for that style. All three pass with the new branch and enum. |
+| Full suite and syntax | `npm test`: 338 passed, zero failures, cancellations, or skips. `npm run check`: all 58 JavaScript files passed on Node 24.20.0. |
+| Persistence and compatibility | A real SettingsRepo round-trip retains Renako, encrypted credentials, exact saved instructions, owner number, and additional allowed numbers. Reading leaves disk bytes unchanged; an invalid subsequent style is rejected without replacing the saved file. Legacy feminine defaults and existing custom behavior remain covered. |
+| Actual AI boundary | A local HTTP fixture through the official client receives the selected character anchors and shared academic/sticker instructions. The service converts Markdown bold, removes the sticker control from text/history, and returns the allowed shy reaction in one request. Switching to custom/off sends its exact new base prompt on the next request without a character overlay or sticker selection. Authored fixture replies establish plumbing, not model-generated character fidelity. |
+| Browser | Chromium passed at 1440 × 1000, 768 × 667, 360 × 667, and 320 × 560. Renako selection survives save/reload while prompt/key stay intact; changing back to feminine works. Existing access, provider, media, QR/status, session/dialog, keyboard navigation, font, and overflow flows pass with zero detected axe WCAG AA violations or browser errors. |
+| Independent review | No Critical, Important, or Minor findings within the approved scope. Review checked prompt consistency, source character anchors supplied from primary sources, persistence, shared controls, actual-client tests, and dashboard integration. |
+| Complete source package | The 127-entry ZIP includes the new character module and persona notes and excludes runtime secrets/storage. A fresh `npm ci --omit=dev --ignore-scripts` and 290 packaged feature tests passed. The exported owned CLI served health, login, authenticated legacy settings, dashboard, CSS, favicon, bundled font, and license on its allocated port; assets matched archive bytes. Overlay/startup preserved synthetic `secrets.env`, legacy `.env`, encrypted settings, custom instructions, and pairing-marker bytes. Only the isolated unpaired fixture was started and stopped. Working/staged diff checks passed. |
+
+Character naturalness, long-conversation drift, factual accuracy, and instruction adherence depend on the chosen model and were not evaluated through live-model generation. No live WhatsApp message, operator data, or remote server was accessed. Only synthetic local fixtures and owned unpaired processes are used in application checks. Original dialogue samples are adaptations rather than quotations; no new character artwork or sticker pack is included.
+
 ## WhatsApp bold correction — 2026-10-16
 
 The application now converts ordinary balanced, same-line Markdown bold to WhatsApp's single-asterisk syntax at the AI response boundary. For example, `**Jawaban:** **B. Fotosintesis**` becomes `*Jawaban:* *B. Fotosintesis*`. Sticker controls are parsed first; returned text and conversation memory receive the same corrected answer. The feminine guide requests this syntax, while custom system prompts remain unchanged.

@@ -294,8 +294,8 @@ function validateAndNormalize(input, { maxTokensCeiling, allowEmptyApiKey, addit
 
   if (typeof bot.systemPrompt !== 'string') fields['bot.systemPrompt'] = 'Required.';
   else if (bot.systemPrompt.length > 4000) fields['bot.systemPrompt'] = 'Must be at most 4000 characters.';
-  if (!['feminine', 'custom'].includes(normalized.bot.personaStyle)) {
-    fields['bot.personaStyle'] = 'Choose feminine or custom prompt only.';
+  if (!['feminine', 'renako', 'custom'].includes(normalized.bot.personaStyle)) {
+    fields['bot.personaStyle'] = 'Choose feminine, Renako Amaori, or custom prompt only.';
   }
   if (!['contextual', 'on-request', 'off'].includes(normalized.bot.stickerReplies)) {
     fields['bot.stickerReplies'] = 'Choose occasional, on request, or off.';

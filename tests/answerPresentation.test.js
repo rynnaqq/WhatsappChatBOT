@@ -135,3 +135,33 @@ test('AI boundary converts Markdown bold to WhatsApp bold before returning and r
     { role: 'assistant', content: expected },
   ]);
 });
+
+test('Renako reaches the actual provider with academic guidance, native bold and independent sticker controls', async (t) => {
+  const provider = await startProvider(t, 'E-eh, **makasih**, ya! >.<\n[[sticker:shy]]');
+  const memory = new MemoryService();
+  const activeSettings = settings(provider.baseURL, { personaStyle: 'renako' });
+  const service = new AIService({ settingsRepo: fakeRepo(activeSettings), memory });
+  const input = 'Hai Renako, kamu lucu banget!';
+  assert.deepEqual(await service.replyWithMedia({ chatId: 'renako-chat', text: input }), {
+    text: 'E-eh, *makasih*, ya! >.<', stickerId: 'shy',
+  });
+  assert.equal(provider.requests.length, 1);
+  const sentPrompt = provider.requests[0].messages[0].content;
+  assert.ok(sentPrompt.startsWith('Solve accurately and preserve the source content.'));
+  assert.match(sentPrompt, /Renako Amaori/u);
+  assert.match(sentPrompt, /WATANARE/u);
+  assert.match(sentPrompt, /introvert/iu);
+  assert.match(sentPrompt, /blanket|selimut/iu);
+  assert.match(sentPrompt, /\*Jawaban: B\. \.\.\.\*.*\*Penjelasan:\* \.\.\./su);
+  assert.match(sentPrompt, /\[\[sticker:shy\]\]/u);
+  assert.deepEqual(memory.get('renako-chat', 3).at(-1), {
+    role: 'assistant', content: 'E-eh, *makasih*, ya! >.<',
+  });
+  activeSettings.bot.personaStyle = 'custom';
+  activeSettings.bot.stickerReplies = 'off';
+  activeSettings.bot.systemPrompt = 'Answer in Indonesian.';
+  const next = await service.replyWithMedia({ chatId: 'renako-chat', text: 'Halo lagi.' });
+  assert.equal(next.stickerId, null);
+  assert.equal(provider.requests.length, 2);
+  assert.equal(provider.requests[1].messages[0].content, 'Answer in Indonesian.');
+});

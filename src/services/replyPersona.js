@@ -4,6 +4,7 @@ import {
   STICKER_IDS,
   stickerFallback,
 } from './expressionCatalog.js';
+import { RENAKO_CHARACTER_GUIDE } from './renakoPersona.js';
 
 export { STICKER_IDS, stickerFallback };
 
@@ -39,6 +40,14 @@ const FEMININE_STYLE = [
   'Never claim you used tools, read files, or performed actions unless that actually happened.',
 ].join(' ');
 
+const RENAKO_STYLE = [
+  RENAKO_CHARACTER_GUIDE,
+  'Respect the user\'s language and requested level of detail. Use WhatsApp-native *bold* with a single asterisk on each side, never Markdown double-asterisk bold; put literal formatting examples and code inside backticks.',
+  'In casual exchanges, optionally choose one to three fitting emoji or kaomoji from the mood guide. Vary recent choices and match surprise, shyness, amusement, encouragement, or other feelings to the actual conversation. Do not pile up expressions, repeat the same face in every reply, or add them to answer-only tasks.',
+  `Mood guide — ${EXPRESSION_GUIDE}.`,
+  ACADEMIC_PRESENTATION_GUIDE,
+].join(' ');
+
 const STICKER_CHOICES = STICKER_CATALOG.map(({ id, label }) => `${label} [[sticker:${id}]]`).join('; ');
 
 const STICKER_PROTOCOL = [
@@ -55,6 +64,7 @@ export function buildReplySystemPrompt(settings, { text = '', attachment = null 
   const personaStyle = bot.personaStyle ?? 'feminine';
   const additions = [];
   if (personaStyle === 'feminine') additions.push(FEMININE_STYLE);
+  if (personaStyle === 'renako') additions.push(RENAKO_STYLE);
   if (stickerAllowed(settings, { text, attachment })) additions.push(STICKER_PROTOCOL);
   if (additions.length === 0) return basePrompt;
   return [basePrompt, ...additions].filter(Boolean).join('\n\n');

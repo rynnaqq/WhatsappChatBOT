@@ -338,6 +338,34 @@ test('persona and sticker choices persist through masked-key saves and invalid m
   }
 });
 
+test('Renako selection persists with encrypted credentials, custom instructions and access policy intact', async (t) => {
+  const { repo, storageDir } = await makeRepo(t);
+  await repo.save(validSettings({ bot: {
+    systemPrompt: 'Keep my document instructions.',
+    accessMode: 'allowlist',
+    ownerNumber: '6281234567890',
+    allowedNumbers: ['12025550100'],
+  } }));
+  const payload = repo.getPublic();
+  payload.bot.personaStyle = 'renako';
+  await repo.save(payload);
+  const file = path.join(storageDir, 'settings.json');
+  const savedBytes = await readFile(file, 'utf8');
+  const restored = new SettingsRepo({ storageDir, encryptionSecret: secret });
+  await restored.init();
+  assert.equal(restored.getPublic().bot.personaStyle, 'renako');
+  assert.equal(restored.get().ai.apiKey, 'sk-test-secret');
+  assert.equal(restored.get().bot.systemPrompt, 'Keep my document instructions.');
+  assert.equal(restored.get().bot.accessMode, 'allowlist');
+  assert.equal(restored.get().bot.ownerNumber, '6281234567890');
+  assert.deepEqual(restored.get().bot.allowedNumbers, ['12025550100']);
+  assert.equal(await readFile(file, 'utf8'), savedBytes);
+  const invalid = restored.getPublic();
+  invalid.bot.personaStyle = 'unrecognized-character';
+  await assert.rejects(restored.save(invalid), error => error instanceof SettingsValidationError);
+  assert.equal(await readFile(file, 'utf8'), savedBytes);
+});
+
 test('missing and older encrypted settings use compatible unrestricted access without rewriting saved data', async (t) => {
   const { repo, storageDir } = await makeRepo(t);
   assert.equal(repo.get().bot.accessMode, 'everyone');

@@ -471,6 +471,16 @@ try {
     assert.equal(await ownerNumber.getAttribute('required'), null);
     assert.equal(await page.getByLabel(/^API key/).inputValue(), '');
     assert.equal(repo.get().ai.apiKey, 'fake-browser-provider-key');
+    const savedSystemPrompt = repo.get().bot.systemPrompt;
+    await page.getByLabel('Reply style', { exact: true }).selectOption('renako');
+    await saveSettings(page);
+    await page.reload();
+    await page.locator('#save-state').filter({ hasText: 'All changes saved' }).waitFor();
+    assert.equal(await page.getByLabel('Reply style', { exact: true }).inputValue(), 'renako');
+    assert.equal(repo.get().bot.personaStyle, 'renako');
+    assert.equal(repo.get().bot.systemPrompt, savedSystemPrompt);
+    assert.equal(repo.get().ai.apiKey, 'fake-browser-provider-key');
+    await assertNoHorizontalOverflow(page, `Renako selection at ${width}px`);
     await page.getByLabel('Reply style', { exact: true }).selectOption('feminine');
     await page.getByLabel('Sticker replies', { exact: true }).selectOption('contextual');
     await saveSettings(page);
